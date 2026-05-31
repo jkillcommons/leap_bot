@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# lbot — LEAP Bot control script
+# Mirror of wbot. Manages the Telegram listener daemon.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_FILE="$SCRIPT_DIR/leap_listener.pid"
+LOG_FILE="$SCRIPT_DIR/logs/listener.log"
+PYTHON="${PYTHON:-python3}"
+
+cmd="${1:-help}"
+
+_is_running() {
+    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+}
+
+_start() {
+    if _is_running; then
+        echo "LEAP Bot is already running (PID $(cat "$PID_FILE"))"
+        return 0
+    fi
+    mkdir -p "$SCRIPT_DIR/logs"
+    cd "$SCRIPT_DIR"
+    nohup "$PYTHON" main.py --mode listen >>"$LOG_FILE" 2>&1 &
+    echo $! > "$PID_FILE"
+    sleep 1
+    if _is_running; then
+        echo "LEAP Bot started (PID $(cat "$PID_FILE"))"
+    else
+        echo "LEAP Bot failed to start. Check $LOG_FILE"
+        exit 1
+    fi
+}
+
+_stop() {
+    if ! _is_running; then
+        echo "LEAP Bot is not running."
+        rm -f "$PID_FILE"
+        return 0
+    fi
+    kill "$(cat "$PID_FILE")"
+    rm -f "$PID_FILE"
+    echo "LEAP Bot stopped."
+}
+
+case "$cmd" in
+    start)
+        _start
+        ;;
+    stop)
+        _stop
+        ;;
+    restart)
+        _stop
+        sleep 1
+        _start
+        ;;
+    status)
+        if _is_running; then
+            echo "🟢 LEAP Bot is running (PID $(cat "$PID_FILE"))"
+        else
+            echo "🔴 LEAP Bot is not running."
+        fi
+        echo ""
+        echo "--- Last 20 lines of $LOG_FILE ---"
+        tail -n 20 "$LOG_FILE" 2>/dev/null || echo "(no log yet)"
+        ;;
+    logs)
+        tail -f "$LOG_FILE"
+        ;;
+    update)
+        echo "Pulling latest code..."
+        cd "$SCRIPT_DIR"
+        git pull
+        _stop
+        sleep 1
+        _start
+        ;;
+    leaps)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode leaps
+        ;;
+    watchlist)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode watchlist
+        ;;
+    trades)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode trades
+        ;;
+    summary)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode summary
+        ;;
+    chain)
+        if [[ -z "${2:-}" ]]; then
+            echo "Usage: lbot chain SYMBOL"
+            exit 1
+        fi
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode chain --symbol "$2"
+        ;;
+    broker)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode broker
+        ;;
+    puts)
+        # Optional --dry-run flag: lbot puts --dry-run
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode puts ${2:+"$2"}
+        ;;
+    check_puts)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode check_puts
+        ;;
+    help|--help|-h)
+        echo "Usage: lbot <command>"
+        echo ""
+        echo "  start      Start the Telegram listener daemon"
+        echo "  stop       Stop the daemon"
+        echo "  restart    Restart the daemon"
+        echo "  status     Show daemon status + last 20 log lines"
+        echo "  logs       Tail the listener log (Ctrl-C to exit)"
+        echo "  update     git pull + restart"
+        echo "  leaps      Print LEAP recommendations"
+        echo "  watchlist  Print LEAP watchlist"
+        echo "  trades     Print open paper trades"
+        echo "  summary    Print P&L summary"
+        echo "  chain SYM        Fetch live option chain, show best LEAP candidate"
+        echo "  broker           Show broker connection status"
+        echo "  puts             Scan bearish candidates, paper-trade best put"
+        echo "  puts --dry-run   Scan without writing any trades"
+        echo "  check_puts       Check open puts for profit/loss/time exits"
+        ;;
+    *)
+        echo "Unknown command: $cmd"
+        echo "Run 'lbot help' for usage."
+        exit 1
+        ;;
+esac
