@@ -48,6 +48,9 @@ def _connect():
     for migration in (
         "ALTER TABLE paper_trades ADD COLUMN journal_id INTEGER",
         "ALTER TABLE paper_trades ADD COLUMN play_type TEXT DEFAULT 'long_call_leap'",
+        "ALTER TABLE paper_trades ADD COLUMN delta_at_entry REAL",
+        "ALTER TABLE paper_trades ADD COLUMN iv_rank_at_entry REAL",
+        "ALTER TABLE paper_trades ADD COLUMN stop_loss_price REAL",
     ):
         try:
             conn.execute(migration)
@@ -59,18 +62,23 @@ def _connect():
 
 def add_paper_trade(ticker, strike, expiration, entry_price,
                     breakeven, target_exit=None, notes="", contracts=1,
-                    play_type="long_call_leap"):
+                    play_type="long_call_leap", delta_at_entry=None,
+                    iv_rank_at_entry=None, stop_loss_price=None):
     conn = _connect()
     today_str = date.today().isoformat()
     cur = conn.execute(
         """INSERT INTO paper_trades
            (ticker, entered_date, strike, expiration, contracts,
-            entry_price, breakeven, target_exit, notes, status, play_type)
-           VALUES (?,?,?,?,?,?,?,?,?,'open',?)""",
+            entry_price, breakeven, target_exit, notes, status, play_type,
+            delta_at_entry, iv_rank_at_entry, stop_loss_price)
+           VALUES (?,?,?,?,?,?,?,?,?,'open',?,?,?,?)""",
         (ticker.upper(), today_str, float(strike),
          expiration, contracts, float(entry_price),
          float(breakeven), float(target_exit) if target_exit else None,
-         notes, play_type),
+         notes, play_type,
+         float(delta_at_entry) if delta_at_entry is not None else None,
+         float(iv_rank_at_entry) if iv_rank_at_entry is not None else None,
+         float(stop_loss_price) if stop_loss_price is not None else None),
     )
     trade_id = cur.lastrowid
     conn.commit()
@@ -248,6 +256,27 @@ def get_trade_summary():
         "best_trade": best,
         "worst_trade": worst,
     }
+
+
+def set_journal_id(trade_id: int, journal_id: int) -> None:
+    conn = _connect()
+    conn.execute(
+        "UPDATE paper_trades SET journal_id = ? WHERE id = ?",
+        (journal_id, trade_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_journal_id(trade_id: int):
+    conn = _connect()
+    cur = conn.execute(
+        "SELECT journal_id FROM paper_trades WHERE id = ?",
+        (trade_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return row["journal_id"] if row else None
 
 
 def check_connection():

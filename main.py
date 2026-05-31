@@ -450,6 +450,58 @@ def mode_broker():
     print()
 
 
+def mode_monitor():
+    """Run position monitor: check all open positions for stops/targets/DTE."""
+    import config
+    from broker.factory import make_broker
+    from monitoring.position_monitor import PositionMonitor
+
+    print(f"\n{'='*64}")
+    print("  Position Monitor")
+    print(f"{'='*64}")
+
+    try:
+        broker = make_broker()
+    except Exception as e:
+        print(f"  Broker init failed: {e}\n")
+        return
+
+    alerts_sent = []
+
+    def _send(msg):
+        # Strip HTML tags for console output
+        import re
+        clean = re.sub(r"<[^>]+>", "", msg)
+        print(f"\n  ALERT: {clean}")
+        alerts_sent.append(msg)
+        # Also send via Telegram if configured
+        try:
+            if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
+                import urllib.request, urllib.parse
+                urllib.request.urlopen(
+                    f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage?"
+                    + urllib.parse.urlencode({
+                        "chat_id": config.TELEGRAM_CHAT_ID,
+                        "text": msg,
+                        "parse_mode": "HTML",
+                    }),
+                    timeout=10,
+                )
+        except Exception:
+            pass
+
+    monitor = PositionMonitor(ldb, broker, _send)
+    result = monitor.run()
+    checked = result.get("checked", 0)
+    n_alerts = result.get("alerts", 0)
+
+    if n_alerts == 0:
+        print(f"  All {checked} position(s) healthy.")
+    else:
+        print(f"\n  {n_alerts} alert(s) fired across {checked} position(s).")
+    print()
+
+
 MODES = {
     "leaps":      lambda: mode_leaps(),
     "watchlist":  lambda: mode_watchlist(),
@@ -460,6 +512,7 @@ MODES = {
     "broker":     lambda: mode_broker(),
     "puts":       None,          # handled specially — supports --dry-run
     "check_puts": lambda: mode_check_puts(),
+    "monitor":    lambda: mode_monitor(),
 }
 
 

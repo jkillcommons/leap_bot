@@ -75,7 +75,10 @@ def cmd_help(args, chat_id):
         "/put_scan       — scan screener for bearish candidates, show best put\n\n"
         "📒 <b>Trade Journal</b>\n"
         "/journal [N]    — last N closed trades (default 10)\n"
-        "/scorecard      — win rates &amp; P&amp;L by play type; promotion status",
+        "/scorecard      — win rates &amp; P&amp;L by play type; promotion status\n\n"
+        "📡 <b>Monitoring</b>\n"
+        "/leaps_status   — open positions, capital deployed, P&amp;L snapshot\n"
+        "/monitor        — check all positions for stop/target/DTE alerts",
         chat_id=chat_id,
     )
 
@@ -200,12 +203,21 @@ def cmd_enter(args, chat_id):
         return
 
     breakeven = strike + entry_price
-    trade_id = ldb.add_paper_trade(ticker, strike, expiration, entry_price, breakeven)
+    stop_loss_price = round(entry_price * 0.50, 2)
+    target_price    = round(entry_price * 2.00, 2)
+    trade_id = ldb.add_paper_trade(
+        ticker, strike, expiration, entry_price, breakeven,
+        target_exit=target_price, stop_loss_price=stop_loss_price,
+    )
+    journal_id = ldb.get_journal_id(trade_id)
+    journal_line = f"Journal ID: {journal_id}\n" if journal_id else ""
     send_message(
         f"📝 <b>PAPER TRADE ENTERED</b>\n"
         f"{ticker}  Strike: ${strike}  Exp: {expiration}\n"
         f"Entry: ${entry_price}  Breakeven: ${breakeven:.2f}\n"
-        f"ID: {trade_id}",
+        f"Stop loss: ${stop_loss_price}  Target: ${target_price}\n"
+        f"Trade ID: {trade_id}\n"
+        f"{journal_line}",
         chat_id=chat_id,
     )
 
@@ -229,11 +241,18 @@ def cmd_close(args, chat_id):
 
     pnl = result["pnl"]
     pnl_pct = ((exit_price - result["entry_price"]) / result["entry_price"]) * 100
+    if pnl_pct >= 90:
+        exit_reason = "profit_target"
+    elif pnl_pct <= -45:
+        exit_reason = "stop_loss"
+    else:
+        exit_reason = "manual"
     sign = "+" if pnl >= 0 else ""
     send_message(
         f"✅ <b>TRADE CLOSED</b>\n"
         f"{ticker}  Exit: ${exit_price}\n"
         f"P&amp;L: {sign}${pnl:.2f}  ({sign}{pnl_pct:.1f}%)\n"
+        f"Reason: {exit_reason}\n"
         + (f"{notes}" if notes else ""),
         chat_id=chat_id,
     )
@@ -885,6 +904,93 @@ def cmd_scorecard(args, chat_id):
     send_message("\n".join(lines), chat_id=chat_id)
 
 
+def cmd_leaps_status(args, chat_id):
+    """/leaps_status — portfolio snapshot: open positions, capital deployed, P&L."""
+    from datetime import date as _date
+
+    open_trades = ldb.get_all_open()
+    n = len(open_trades)
+    capital = sum((t.get("entry_price") or 0) * 100 for t in open_trades)
+
+    lines = [f"📊 <b>LEAPS STATUS</b>"]
+    lines.append(f"Open positions: {n}")
+    lines.append(f"Capital deployed: ${capital:,.0f}")
+
+    if open_trades:
+        lines.append("\n<b>Positions (up to 5):</b>")
+        today = _date.today()
+        for t in open_trades[:5]:
+            entry = t.get("entry_price") or 0
+            cur = t.get("current_price")
+            if cur and entry:
+                pnl_pct = ((cur - entry) / entry) * 100
+                pnl_str = f"  {pnl_pct:+.1f}%"
+            else:
+                pnl_str = ""
+            try:
+                dte_rem = (_date.fromisoformat(t["expiration"]) - today).days
+            except (ValueError, TypeError):
+                dte_rem = None
+            dte_str = f"  DTE:{dte_rem}" if dte_rem is not None else ""
+            lines.append(
+                f"  <b>{t['ticker']}</b> ${t['strike']:.0f} {t['expiration']}"
+                f"{pnl_str}{dte_str}"
+            )
+
+    # Journal scorecard summary
+    try:
+        jdb = _load_jdb()
+        if jdb is not None:
+            scorecard = jdb.get_scorecard()
+            candidates = jdb.get_promotion_candidates()
+            if scorecard:
+                lines.append("\n<b>Scorecard:</b>")
+                for row in scorecard[:3]:
+                    pt = row["play_type"].replace("_", " ").title()
+                    avg = row.get("avg_pnl_dollars") or 0
+                    lines.append(
+                        f"  {pt}: {row['total_trades']} trades  "
+                        f"Win {row.get('win_rate_pct', 0):.0f}%  "
+                        f"Avg {'+' if avg >= 0 else ''}${avg:.0f}"
+                    )
+            if candidates:
+                ready = [c for c in candidates if c.get("promotion_status") == "READY FOR LIVE"]
+                if ready:
+                    lines.append("\n🏆 <b>Promotion target:</b> "
+                                 + ", ".join(c["play_type"].replace("_", " ").title() for c in ready))
+    except Exception:
+        pass
+
+    send_message("\n".join(lines), chat_id=chat_id)
+
+
+def cmd_monitor(args, chat_id):
+    """/monitor — run position monitor, alert on stops/targets/DTE."""
+    from monitoring.position_monitor import PositionMonitor
+    from broker.factory import make_broker
+
+    try:
+        broker = make_broker()
+    except Exception as e:
+        send_message(f"⚠️ Broker init failed: {e}", chat_id=chat_id)
+        return
+
+    def _send(msg):
+        send_message(msg, chat_id=chat_id)
+
+    monitor = PositionMonitor(ldb, broker, _send)
+    try:
+        result = monitor.run()
+    except Exception as e:
+        send_message(f"⚠️ Monitor error: {e}", chat_id=chat_id)
+        return
+
+    alerts = result.get("alerts", 0)
+    checked = result.get("checked", 0)
+    if alerts == 0:
+        send_message(f"✅ All {checked} position(s) healthy.", chat_id=chat_id)
+
+
 # ── dispatch ──────────────────────────────────────────────────────────────────
 
 def cmd_puts(args, chat_id):
@@ -1040,6 +1146,8 @@ COMMANDS = {
     "/scorecard":       cmd_scorecard,
     "/puts":            cmd_puts,
     "/put_scan":        cmd_put_scan,
+    "/leaps_status":    cmd_leaps_status,
+    "/monitor":         cmd_monitor,
 }
 
 

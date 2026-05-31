@@ -115,6 +115,9 @@ case "$cmd" in
     check_puts)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode check_puts
         ;;
+    monitor)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode monitor
+        ;;
     help|--help|-h)
         echo "Usage: lbot <command>"
         echo ""
@@ -132,7 +135,8 @@ case "$cmd" in
         echo "  broker           Show broker connection status"
         echo "  puts             Scan bearish candidates, paper-trade best put"
         echo "  puts --dry-run   Scan without writing any trades"
-        echo "  check_puts       Check open puts for profit/loss/time exits"
+        echo "  check_puts       Check open puts for profit/loss/time exits
+  monitor          Check all open positions for stop/target/DTE alerts"
         ;;
     *)
         echo "Unknown command: $cmd"
