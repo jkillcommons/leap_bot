@@ -22,7 +22,9 @@ def get_leap_recommendations(n=20):
         conn = _connect()
         conn.row_factory = sqlite3.Row
         cur = conn.execute(
-            "SELECT * FROM leap_recommendations ORDER BY run_date DESC LIMIT ?", (n,)
+            """SELECT * FROM leap_recommendations
+               WHERE run_date = (SELECT MAX(run_date) FROM leap_recommendations)
+               ORDER BY leap_score DESC LIMIT ?""", (n,)
         )
         rows = [dict(r) for r in cur.fetchall()]
         conn.close()
