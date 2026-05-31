@@ -5,28 +5,38 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-PID_FILE="$SCRIPT_DIR/leap_listener.pid"
 LOG_FILE="$SCRIPT_DIR/logs/listener.log"
 PYTHON="${PYTHON:-python3}"
+PLIST="$HOME/Library/LaunchAgents/com.leapbot.plist"
+LAUNCHD_LABEL="com.leapbot"
 
 cmd="${1:-help}"
 
+_launchd_available() {
+    [[ -f "$PLIST" ]]
+}
+
 _is_running() {
-    [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+    launchctl list "$LAUNCHD_LABEL" 2>/dev/null | grep -q '"PID"'
 }
 
 _start() {
+    if ! _launchd_available; then
+        echo "launchd plist not found at $PLIST — run lbot install first"
+        exit 1
+    fi
     if _is_running; then
-        echo "LEAP Bot is already running (PID $(cat "$PID_FILE"))"
+        local pid
+        pid=$(launchctl list "$LAUNCHD_LABEL" 2>/dev/null | grep '"PID"' | awk -F'[= ]' '{print $NF}' | tr -d ';')
+        echo "LEAP Bot is already running (PID $pid)"
         return 0
     fi
-    mkdir -p "$SCRIPT_DIR/logs"
-    cd "$SCRIPT_DIR"
-    nohup "$PYTHON" main.py --mode listen >>"$LOG_FILE" 2>&1 &
-    echo $! > "$PID_FILE"
+    launchctl bootstrap gui/$(id -u) "$PLIST" 2>/dev/null || true
     sleep 1
     if _is_running; then
-        echo "LEAP Bot started (PID $(cat "$PID_FILE"))"
+        local pid
+        pid=$(launchctl list "$LAUNCHD_LABEL" 2>/dev/null | grep '"PID"' | awk -F'[= ]' '{print $NF}' | tr -d ';')
+        echo "LEAP Bot started (PID $pid)"
     else
         echo "LEAP Bot failed to start. Check $LOG_FILE"
         exit 1
@@ -36,11 +46,9 @@ _start() {
 _stop() {
     if ! _is_running; then
         echo "LEAP Bot is not running."
-        rm -f "$PID_FILE"
         return 0
     fi
-    kill "$(cat "$PID_FILE")"
-    rm -f "$PID_FILE"
+    launchctl bootout gui/$(id -u) "$PLIST" 2>/dev/null || true
     echo "LEAP Bot stopped."
 }
 
@@ -58,7 +66,8 @@ case "$cmd" in
         ;;
     status)
         if _is_running; then
-            echo "🟢 LEAP Bot is running (PID $(cat "$PID_FILE"))"
+            pid=$(launchctl list "$LAUNCHD_LABEL" 2>/dev/null | grep '"PID"' | awk -F'[= ]' '{print $NF}' | tr -d ';')
+            echo "🟢 LEAP Bot is running (PID $pid)"
         else
             echo "🔴 LEAP Bot is not running."
         fi
@@ -74,7 +83,7 @@ case "$cmd" in
         cd "$SCRIPT_DIR"
         git pull
         _stop
-        sleep 1
+        sleep 2
         _start
         ;;
     leaps)
