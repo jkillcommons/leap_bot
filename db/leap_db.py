@@ -128,7 +128,7 @@ def update_price(ticker, current_price):
     conn.close()
 
 
-def close_trade(ticker, exit_price, notes=""):
+def close_trade(ticker, exit_price, notes="", exit_reason=None):
     conn = _connect()
     cur = conn.execute(
         "SELECT * FROM paper_trades WHERE ticker=? AND status='open' ORDER BY id DESC LIMIT 1",
@@ -158,13 +158,23 @@ def close_trade(ticker, exit_price, notes=""):
             if jdb is not None:
                 cost_basis = row["entry_price"] * 100 * row["contracts"]
                 pnl_pct = (pnl / cost_basis * 100) if cost_basis else 0.0
+                # Derive exit_reason from P&L if not explicitly provided
+                if exit_reason is None:
+                    if pnl_pct >= 90:
+                        _exit_reason = "profit_target"
+                    elif pnl_pct <= -45:
+                        _exit_reason = "stop_loss"
+                    else:
+                        _exit_reason = "manual"
+                else:
+                    _exit_reason = exit_reason
                 jdb.close_trade(
                     trade_id=journal_id,
                     exit_date=today_str,
                     exit_price=float(exit_price),
                     pnl_dollars=pnl,
                     pnl_pct=round(pnl_pct, 2),
-                    exit_reason="manual",
+                    exit_reason=_exit_reason,
                     notes=notes or "",
                 )
         except Exception:

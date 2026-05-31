@@ -234,19 +234,26 @@ def cmd_close(args, chat_id):
         send_message(f"❌ Invalid input: {e}", chat_id=chat_id)
         return
 
-    result = ldb.close_trade(ticker, exit_price, notes)
+    # Peek at the open trade to compute exit_reason before closing
+    open_trade = ldb.get_trade_by_ticker(ticker)
+    if open_trade and open_trade.get("entry_price"):
+        _pnl_pct = ((exit_price - open_trade["entry_price"]) / open_trade["entry_price"]) * 100
+        if _pnl_pct >= 90:
+            exit_reason = "profit_target"
+        elif _pnl_pct <= -45:
+            exit_reason = "stop_loss"
+        else:
+            exit_reason = "manual"
+    else:
+        exit_reason = "manual"
+
+    result = ldb.close_trade(ticker, exit_price, notes, exit_reason=exit_reason)
     if not result:
         send_message(f"❌ No open trade found for {ticker}.", chat_id=chat_id)
         return
 
     pnl = result["pnl"]
     pnl_pct = ((exit_price - result["entry_price"]) / result["entry_price"]) * 100
-    if pnl_pct >= 90:
-        exit_reason = "profit_target"
-    elif pnl_pct <= -45:
-        exit_reason = "stop_loss"
-    else:
-        exit_reason = "manual"
     sign = "+" if pnl >= 0 else ""
     send_message(
         f"✅ <b>TRADE CLOSED</b>\n"
