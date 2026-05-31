@@ -273,7 +273,8 @@ class AlpacaBroker(BrokerInterface):
 
             if snap and snap.greeks:
                 delta = float(snap.greeks.delta) if snap.greeks.delta else None
-                iv    = float(snap.greeks.iv) if snap.greeks.iv else None
+            if snap and snap.implied_volatility:
+                iv = float(snap.implied_volatility)
 
             # BS delta fallback
             delta_src = "live"
