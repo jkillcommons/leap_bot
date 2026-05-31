@@ -24,6 +24,7 @@ def get_leap_recommendations(n=20):
         cur = conn.execute(
             """SELECT * FROM leap_recommendations
                WHERE run_date = (SELECT MAX(run_date) FROM leap_recommendations)
+               GROUP BY ticker
                ORDER BY leap_score DESC LIMIT ?""", (n,)
         )
         rows = [dict(r) for r in cur.fetchall()]
