@@ -36,17 +36,20 @@ def print_table(rows, columns):
     return True
 
 
-def mode_leaps():
+def mode_leaps(dry_run=False, symbol=None):
+    """Scan LEAP call candidates and optionally paper-trade the selected one."""
     import config
+    from datetime import date, datetime, timedelta
+    from chain.leap_chain import select_leap_call, breakeven as leap_breakeven
+    from broker.factory import make_broker
 
     print(f"\n{'='*64}")
-    print("  LEAP Bot — Pre-Flight Checks")
+    print("  LEAP Bot — Pre-Flight Checks" + (" (DRY RUN)" if dry_run else ""))
     print(f"{'='*64}")
 
     # a. Data broker connectivity
     broker = None
     try:
-        from broker.factory import make_broker
         broker = make_broker()
         spy = broker.get_latest_price("SPY")
         if spy:
@@ -56,7 +59,7 @@ def mode_leaps():
     except Exception as e:
         print(f"  ⚠️  Data broker    : {e}")
 
-    # b. Alpaca paper account balance
+    # b. Paper account balance
     try:
         if broker is not None:
             acct = broker.get_account()
@@ -67,15 +70,13 @@ def mode_leaps():
     except Exception as e:
         print(f"  ⚠️  Paper account  : {e}")
 
-    # c. Open positions count
-    open_trades = ldb.get_open_trades()
-    print(f"  Open LEAP positions: {len(open_trades)}")
-
-    # d. Capital deployed
+    # c. Open LEAP positions
+    open_trades = ldb.get_open_trades(play_type="long_call_leap")
     total_deployed = sum(
         t.get("entry_price", 0) * 100 * t.get("contracts", 1)
         for t in open_trades
     )
+    print(f"  Open LEAP positions: {len(open_trades)}")
     print(f"  Capital in LEAPs  : ${total_deployed:,.0f}")
 
     # ── Candidates ────────────────────────────────────────────────────────────
@@ -84,7 +85,6 @@ def mode_leaps():
         print("\nNo LEAP recommendations in screener DB yet.")
         return
 
-    # Filter by configured thresholds
     recs = [
         r for r in all_recs
         if (r.get("leap_score") or 0) >= config.LEAP_SCORE_MIN
@@ -106,6 +106,137 @@ def mode_leaps():
     print(f"{'='*64}")
     print_table(recs, cols)
     print()
+
+    if dry_run:
+        print("  DRY RUN — no trade recorded.\n")
+        return
+
+    # ── Select target candidate ───────────────────────────────────────────────
+    if symbol:
+        target_sym = symbol.upper()
+        cand = next((r for r in recs if r.get("ticker", "").upper() == target_sym), None)
+        if not cand:
+            print(f"  ⛔  {target_sym} not in today's filtered candidates. Aborting.\n")
+            return
+    else:
+        cand = recs[0]   # highest score first
+
+    sym        = cand["ticker"].upper()
+    rec_strike = float(cand.get("strike") or 0)
+    rec_mid    = float(cand.get("mid_price") or 0)
+    iv_rank    = cand.get("iv_rank")
+
+    # ── Live broker chain lookup ──────────────────────────────────────────────
+    print(f"  Fetching live chain for {sym}…")
+    selected_contract = None
+    live_price = None
+    try:
+        if broker:
+            live_price = broker.get_latest_price(sym)
+            if live_price:
+                chain = broker.get_option_chain(
+                    sym, "call",
+                    min_dte=getattr(config, "LEAP_EXP_MIN_DAYS", 300),
+                    max_dte=getattr(config, "LEAP_EXP_MAX_DAYS", 450),
+                    underlying_price=live_price,
+                )
+                if chain:
+                    chain_dicts = [c.to_dict() if hasattr(c, "to_dict") else c for c in chain]
+                    selected_contract = select_leap_call(
+                        chain_dicts,
+                        target_delta=config.LEAP_TARGET_DELTA,
+                        min_delta=config.LEAP_MIN_DELTA,
+                        max_delta=config.LEAP_MAX_DELTA,
+                        underlying_price=live_price,
+                        min_cost=config.LEAP_MIN_COST,
+                        min_open_interest=config.LEAP_MIN_OI,
+                        max_spread_pct=config.LEAP_MAX_SPREAD_PCT,
+                        max_extrinsic_pct=config.LEAP_MAX_EXTRINSIC,
+                    )
+    except Exception as e:
+        print(f"  ⚠️  Chain lookup failed: {e}")
+
+    if selected_contract:
+        strike   = float(selected_contract.get("strike", rec_strike))
+        mid      = float(selected_contract.get("mid") or rec_mid)
+        bid      = float(selected_contract.get("bid") or 0)
+        ask      = float(selected_contract.get("ask") or 0)
+        delta    = float(selected_contract.get("delta") or cand.get("suggested_delta") or config.LEAP_TARGET_DELTA)
+        iv_raw   = selected_contract.get("iv") or selected_contract.get("mid_iv")
+        exp_raw  = selected_contract.get("expiration_date")
+        exp_str  = str(exp_raw)[:10] if exp_raw else None
+        try:
+            dte_days = (date.fromisoformat(exp_str) - date.today()).days if exp_str else None
+        except Exception:
+            dte_days = None
+    else:
+        print(f"  ⚠️  Using screener data (live chain unavailable)")
+        strike   = rec_strike
+        mid      = rec_mid
+        bid = ask = 0.0
+        delta    = float(cand.get("suggested_delta") or config.LEAP_TARGET_DELTA)
+        iv_raw   = None
+        exp_str  = None
+        dte_days = None
+
+    target_exit = round(mid * (1 + config.LEAP_TARGET_GAIN), 2)   # default 2× (100% gain)
+    stop_loss   = round(mid * (1 - config.LEAP_MAX_LOSS),   2)    # default 50% loss
+    beven       = round(strike + mid, 2)
+
+    print(f"\n  ✅ SELECTED LEAP — {sym} ${strike:.0f}C")
+    print(f"  Score     : LEAP={cand.get('leap_score'):.1f}  Trend={cand.get('trend_score'):.1f}"
+          f"  Risk={cand.get('risk_rating', '—')}")
+    if live_price:
+        print(f"  Underlying: ${live_price:.2f}")
+    if exp_str:
+        print(f"  Expiration: {exp_str}" + (f"  ({dte_days} DTE)" if dte_days else ""))
+    else:
+        print(f"  Expiration: ~12 months (screener estimate)")
+    print(f"  Delta     : {delta:.2f}")
+    if bid and ask:
+        print(f"  Bid/Ask   : ${bid:.2f} / ${ask:.2f}")
+    print(f"  Mid       : ${mid:.2f}  (${mid*100:.0f}/contract)")
+    if iv_raw:
+        print(f"  IV        : {iv_raw*100:.0f}%")
+    if iv_rank is not None:
+        print(f"  IVR       : {float(iv_rank):.0f}")
+    print(f"  Breakeven : ${beven:.2f}  at expiration")
+    print(f"  Target    : ${target_exit:.2f}/share  (${target_exit*100:.0f}/contract)  [+100%]")
+    print(f"  Stop      : ${stop_loss:.2f}/share  (${stop_loss*100:.0f}/contract)  [-50%]")
+
+    # ── Interactive confirmation ──────────────────────────────────────────────
+    try:
+        answer = input(f"\n  Paper-trade {sym} ${strike:.0f}C @ ${mid:.2f}? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer != "y":
+        print("  Aborted.\n")
+        return
+
+    # Fall back to calculated expiration if chain lookup failed
+    if not exp_str:
+        exp_str = (datetime.today() + timedelta(days=365)).strftime("%Y-%m-%d")
+
+    trade_id = ldb.add_paper_trade(
+        ticker           = sym,
+        strike           = strike,
+        expiration       = exp_str,
+        entry_price      = mid,
+        breakeven        = beven,
+        target_exit      = target_exit,
+        notes            = f"leap scan; delta={delta:.2f}; iv_rank={iv_rank}",
+        contracts        = 1,
+        play_type        = "long_call_leap",
+        delta_at_entry   = delta,
+        iv_rank_at_entry = iv_rank,
+        stop_loss_price  = stop_loss,
+    )
+    journal_id  = ldb.get_journal_id(trade_id)
+    journal_str = f" | Journal #{journal_id}" if journal_id else ""
+    print(f"\n  ✅ Paper trade logged (id={trade_id}{journal_str}).")
+    print(f"  Breakeven: ${beven:.2f} | Target: ${target_exit:.2f}/share"
+          f" | Stop: ${stop_loss:.2f}/share\n")
 
 
 def mode_watchlist():
@@ -591,7 +722,7 @@ def mode_monitor():
 
 
 MODES = {
-    "leaps":      lambda: mode_leaps(),
+    "leaps":      None,          # handled specially — supports --dry-run and --symbol
     "watchlist":  lambda: mode_watchlist(),
     "trades":     lambda: mode_trades(),
     "summary":    lambda: mode_summary(),
@@ -632,5 +763,8 @@ if __name__ == "__main__":
     elif args.mode == "puts":
         mode_puts(dry_run=args.dry_run,
                   symbol=args.symbol.upper() if args.symbol else None)
+    elif args.mode == "leaps":
+        mode_leaps(dry_run=args.dry_run,
+                   symbol=args.symbol.upper() if args.symbol else None)
     else:
         MODES[args.mode]()
