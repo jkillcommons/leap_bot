@@ -1127,7 +1127,7 @@ def cmd_put_scan(args, chat_id):
                 max_extrinsic_pct=config.PUT_MAX_EXTRINSIC,
             )
             if best:
-                selected = (symbol, price, build_put_candidate(best, price))
+                selected = (symbol, price, build_put_candidate(best, symbol, price))
                 break
         except Exception:
             continue

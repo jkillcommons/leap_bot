@@ -189,11 +189,17 @@ def close_trade(ticker, exit_price, notes="", exit_reason=None):
             "contracts": row["contracts"], "id": row["id"]}
 
 
-def get_open_trades():
+def get_open_trades(play_type=None):
     conn = _connect()
-    cur = conn.execute(
-        "SELECT * FROM paper_trades WHERE status='open' ORDER BY entered_date DESC"
-    )
+    if play_type:
+        cur = conn.execute(
+            "SELECT * FROM paper_trades WHERE status='open' AND play_type=? ORDER BY entered_date DESC",
+            (play_type,),
+        )
+    else:
+        cur = conn.execute(
+            "SELECT * FROM paper_trades WHERE status='open' ORDER BY entered_date DESC"
+        )
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows

@@ -257,7 +257,7 @@ def mode_chain(symbol: str):
     print()
 
 
-def mode_puts(dry_run=False):
+def mode_puts(dry_run=False, symbol=None):
     """Scan for bearish put candidates and paper-trade the best one."""
     import config
     from chain.put_chain import select_put_strike, build_put_candidate
@@ -275,12 +275,26 @@ def mode_puts(dry_run=False):
         return
 
     # ── Candidates ────────────────────────────────────────────────────────────
-    candidates = sdb.get_put_candidates()
-    if not candidates:
-        print("  No bearish candidates found in screener DB.\n")
-        return
-
-    print(f"  {len(candidates)} candidate(s) with wheel_score < 55\n")
+    if symbol:
+        # Symbol override: bypass screener, treat as single candidate
+        candidates = [{"symbol": symbol.upper(), "trend_score": None,
+                       "iv_rank": None, "play_recommendation": None}]
+        print(f"  Symbol override: {symbol.upper()}\n")
+    else:
+        candidates = sdb.get_put_candidates()
+        if not candidates:
+            print("  No bearish candidates found in screener DB.\n")
+            return
+        print(f"  {len(candidates)} candidate(s) with wheel_score < 55")
+        for c in candidates[:10]:
+            sym = c.get("symbol", "")
+            ts  = c.get("trend_score")
+            ivr = c.get("iv_rank")
+            pr  = c.get("play_recommendation") or "—"
+            ts_str  = f"{ts:.1f}"  if ts  is not None else "—"
+            ivr_str = f"{ivr:.0f}" if ivr is not None else "—"
+            print(f"    {sym:<6}  trend={ts_str}  IVR={ivr_str}  rec={pr}")
+        print()
 
     try:
         broker = make_broker()
@@ -289,18 +303,19 @@ def mode_puts(dry_run=False):
         return
 
     selected = None
+    selected_cand = None
     for cand in candidates[:10]:          # cap at first 10 to avoid rate-limit spam
-        symbol = cand.get("symbol", "")
-        if not symbol:
+        sym = cand.get("symbol", "")
+        if not sym:
             continue
-        print(f"  Checking {symbol}…")
+        print(f"  Checking {sym}…")
         try:
-            price = broker.get_latest_price(symbol)
+            price = broker.get_latest_price(sym)
             if not price:
                 print(f"    skip — no price")
                 continue
             chain = broker.get_option_chain(
-                symbol, "put",
+                sym, "put",
                 min_dte=config.PUT_EXP_MIN_DAYS,
                 max_dte=config.PUT_EXP_MAX_DAYS,
                 underlying_price=price,
@@ -321,7 +336,8 @@ def mode_puts(dry_run=False):
                 max_extrinsic_pct=config.PUT_MAX_EXTRINSIC,
             )
             if best:
-                selected = (symbol, price, build_put_candidate(best, price))
+                selected = (sym, price, build_put_candidate(best, sym, price))
+                selected_cand = cand
                 break
         except Exception as e:
             print(f"    error: {e}")
@@ -331,11 +347,18 @@ def mode_puts(dry_run=False):
         print("\n  No candidate passed all put filters.\n")
         return
 
-    symbol, price, put = selected
+    sym, price, put = selected
     mid = put.mid_price or 0
 
     print(f"\n  ✅ BEST PUT CANDIDATE")
-    print(f"  Symbol    : {symbol}")
+    print(f"  Symbol    : {sym}")
+    if selected_cand:
+        ts  = selected_cand.get("trend_score")
+        ivr = selected_cand.get("iv_rank")
+        pr  = selected_cand.get("play_recommendation") or "—"
+        ts_str  = f"{ts:.1f}"  if ts  is not None else "—"
+        ivr_str = f"{ivr:.0f}" if ivr is not None else "—"
+        print(f"  Screener  : trend={ts_str}  IVR={ivr_str}  rec={pr}")
     print(f"  Underlying: ${price:.2f}")
     print(f"  Strike    : ${put.strike:.0f}P")
     print(f"  Expiration: {put.expiration_date}  ({put.dte} DTE)")
@@ -356,7 +379,7 @@ def mode_puts(dry_run=False):
 
     # ── Interactive confirm ───────────────────────────────────────────────────
     try:
-        answer = input(f"\n  Paper-trade {symbol} ${put.strike:.0f}P @ ${mid:.2f}? [y/N] ").strip().lower()
+        answer = input(f"\n  Paper-trade {sym} ${put.strike:.0f}P @ ${mid:.2f}? [y/N] ").strip().lower()
     except (EOFError, KeyboardInterrupt):
         answer = "n"
 
@@ -364,20 +387,27 @@ def mode_puts(dry_run=False):
         print("  Aborted.\n")
         return
 
-    breakeven_val = round(put.strike - mid, 2)
+    breakeven_val    = round(put.strike - mid, 2)
+    iv_rank_at_entry = selected_cand.get("iv_rank") if selected_cand else None
     trade_id = ldb.add_paper_trade(
-        ticker      = symbol,
-        strike      = put.strike,
-        expiration  = str(put.expiration_date)[:10],
-        entry_price = mid,
-        breakeven   = breakeven_val,
-        target_exit = put.target_exit,
-        notes       = f"put scan; delta={put.delta}; iv={put.implied_volatility}",
-        contracts   = 1,
-        play_type   = "long_put",
+        ticker           = sym,
+        strike           = put.strike,
+        expiration       = str(put.expiration_date)[:10],
+        entry_price      = mid,
+        breakeven        = breakeven_val,
+        target_exit      = put.target_exit,
+        notes            = f"put scan; delta={put.delta}; iv={put.implied_volatility}",
+        contracts        = 1,
+        play_type        = "long_put",
+        delta_at_entry   = put.delta,
+        iv_rank_at_entry = iv_rank_at_entry,
+        stop_loss_price  = put.stop_loss,
     )
-    print(f"\n  ✅ Paper trade logged (id={trade_id}).")
-    print(f"  Breakeven: ${breakeven_val:.2f} | Target: ${put.target_exit:.2f}/share\n")
+    journal_id  = ldb.get_journal_id(trade_id)
+    journal_str = f" | Journal #{journal_id}" if journal_id else ""
+    print(f"\n  ✅ Paper trade logged (id={trade_id}{journal_str}).")
+    print(f"  Breakeven: ${breakeven_val:.2f} | Target: ${put.target_exit:.2f}/share"
+          f" | Stop: ${put.stop_loss:.2f}/share\n")
 
 
 def mode_check_puts():
@@ -599,6 +629,7 @@ if __name__ == "__main__":
             parser.error("--symbol is required for --mode chain")
         mode_chain(args.symbol.upper())
     elif args.mode == "puts":
-        mode_puts(dry_run=args.dry_run)
+        mode_puts(dry_run=args.dry_run,
+                  symbol=args.symbol.upper() if args.symbol else None)
     else:
         MODES[args.mode]()
