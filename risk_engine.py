@@ -31,9 +31,16 @@ def _default_account_size() -> float:
     except ValueError:
         return 100_000.0
 
-# Risk thresholds
-HEAT_WARN_PCT        = 0.10
-HEAT_BLOCK_PCT       = 0.15
+# Risk thresholds — calibrated for wheel strategy (2-3 concurrent CSPs normal)
+# Override via env: HEAT_WARN_PCT, HEAT_BLOCK_PCT
+def _pct(env_key, default):
+    try:
+        return float(os.getenv(env_key, "")) or default
+    except ValueError:
+        return default
+
+HEAT_WARN_PCT        = _pct("HEAT_WARN_PCT",  0.20)
+HEAT_BLOCK_PCT       = _pct("HEAT_BLOCK_PCT", 0.35)
 DELTA_WARN           = 200
 DELTA_BLOCK          = 300
 VIX_CONDOR_STOP      = 28.0
