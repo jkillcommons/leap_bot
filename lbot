@@ -87,7 +87,8 @@ case "$cmd" in
         _start
         ;;
     leaps)
-        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode leaps
+        # Supports: lbot leaps [--dry-run] [--symbol SYM]
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode leaps "${@:2}"
         ;;
     watchlist)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode watchlist
@@ -115,6 +116,9 @@ case "$cmd" in
     check_puts)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode check_puts
         ;;
+    check_leaps)
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode check_leaps
+        ;;
     monitor)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode monitor
         ;;
@@ -131,7 +135,9 @@ case "$cmd" in
         echo "  status     Show daemon status + last 20 log lines"
         echo "  logs       Tail the listener log (Ctrl-C to exit)"
         echo "  update     git pull + restart"
-        echo "  leaps      Print LEAP recommendations"
+        echo "  leaps                  Scan LEAP candidates, paper-trade selected
+  leaps --dry-run        Scan without writing any trades
+  leaps --symbol SYM     Override screener, trade specific symbol"
         echo "  watchlist  Print LEAP watchlist"
         echo "  trades     Print open paper trades"
         echo "  summary    Print P&L summary"
@@ -140,7 +146,8 @@ case "$cmd" in
         echo "  puts                   Scan bearish candidates, paper-trade best put"
         echo "  puts --dry-run         Scan without writing any trades"
         echo "  puts --symbol SYM      Override screener, scan specific symbol"
-        echo "  check_puts             Check open puts for profit/loss/time exits"
+        echo "  check_puts             Check open puts for profit/loss/time exits
+  check_leaps            Update LEAP prices + check for target/stop exits"
         echo "  monitor                Check all open positions for stop/target/DTE alerts"
         echo "  python [args...]       Run python in the bot's directory"
         ;;
