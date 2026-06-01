@@ -392,7 +392,7 @@ def mode_puts(dry_run=False, symbol=None):
     trade_id = ldb.add_paper_trade(
         ticker           = sym,
         strike           = put.strike,
-        expiration       = str(put.expiration_date)[:10],
+        expiration       = str(put.expiration)[:10],
         entry_price      = mid,
         breakeven        = breakeven_val,
         target_exit      = put.target_exit,
