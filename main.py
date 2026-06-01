@@ -209,7 +209,7 @@ def mode_leaps(dry_run=False, symbol=None):
         import config as _cfg
         from risk_engine import RiskEngine as _RE
         _re = _RE(
-            account_size   = 100_000,
+            account_size   = None,
             shared_db_path = _cfg.SHARED_DB_PATH,
             leaps_db_path  = _cfg.LEAP_DB_PATH,
         )
@@ -546,7 +546,7 @@ def mode_puts(dry_run=False, symbol=None):
         import config as _cfg
         from risk_engine import RiskEngine as _RE
         _re = _RE(
-            account_size   = 100_000,
+            account_size   = None,
             shared_db_path = _cfg.SHARED_DB_PATH,
             leaps_db_path  = _cfg.LEAP_DB_PATH,
         )
@@ -960,7 +960,7 @@ def mode_diagonal(dry_run=False, symbol=None):
     try:
         from risk_engine import RiskEngine as _RE
         _re = _RE(
-            account_size   = 100_000,
+            account_size   = None,
             shared_db_path = config.SHARED_DB_PATH,
             leaps_db_path  = config.LEAP_DB_PATH,
         )

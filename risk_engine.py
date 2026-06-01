@@ -23,6 +23,14 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+# Account size — override via RISK_ACCOUNT_SIZE env var
+def _default_account_size() -> float:
+    val = os.getenv("RISK_ACCOUNT_SIZE", "")
+    try:
+        return float(val) if val else 100_000.0
+    except ValueError:
+        return 100_000.0
+
 # Risk thresholds
 HEAT_WARN_PCT        = 0.10
 HEAT_BLOCK_PCT       = 0.15
@@ -54,7 +62,8 @@ def calc_heat(play_type: str, params: dict) -> float:
     if t == 'covered_call':
         return params.get('stock_price', 0) * params.get('shares', 100) * 0.20
     elif t == 'cash_secured_put':
-        return params.get('strike', 0) * 100 * params.get('contracts', 1)
+        # 25% of notional — realistic max loss on a wheel CSP (stock drops 25% below strike)
+        return params.get('strike', 0) * 100 * params.get('contracts', 1) * 0.25
     elif t in ('long_call_leap', 'long_put'):
         return params.get('premium', 0) * 100 * params.get('contracts', 1)
     elif t in ('bull_call_spread', 'diagonal_spread'):
@@ -95,12 +104,12 @@ class RiskResult:
 class RiskEngine:
     def __init__(
         self,
-        account_size: float,
-        shared_db_path: str,
+        account_size: Optional[float] = None,
+        shared_db_path: str = "",
         wheel_db_path: Optional[str] = None,
         leaps_db_path: Optional[str] = None,
     ):
-        self.account_size = account_size
+        self.account_size = account_size if account_size is not None else _default_account_size()
         self.shared_db = shared_db_path
         self.wheel_db = wheel_db_path
         self.leaps_db = leaps_db_path

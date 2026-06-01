@@ -1164,7 +1164,7 @@ def cmd_risk(args, chat_id):
         import config
         from risk_engine import RiskEngine
         re = RiskEngine(
-            account_size   = 100_000,
+            account_size   = None,
             shared_db_path = config.SHARED_DB_PATH,
             leaps_db_path  = config.LEAP_DB_PATH,
         )
@@ -1204,7 +1204,7 @@ def cmd_resume(args, chat_id):
         import config
         from risk_engine import RiskEngine
         re = RiskEngine(
-            account_size   = 100_000,
+            account_size   = None,
             shared_db_path = config.SHARED_DB_PATH,
             leaps_db_path  = config.LEAP_DB_PATH,
         )
