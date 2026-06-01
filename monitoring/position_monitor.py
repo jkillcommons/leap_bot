@@ -33,62 +33,88 @@ class PositionMonitor:
     def run(self) -> dict:
         """
         Check all open positions.  Sends Telegram alerts for stops/targets/DTE.
-        Returns {"checked": N, "alerts": M}.
+        Returns {"checked": N, "alerts": M, "exits_triggered": K}.
         """
         positions = self.db.get_all_open()
         alerts = 0
+        exits_triggered = 0
 
         for trade in positions:
             try:
-                fired = self._check_position(trade)
+                fired, is_exit = self._check_position(trade)
                 if fired:
                     alerts += 1
+                if is_exit:
+                    exits_triggered += 1
             except Exception:
                 pass  # never crash the whole run for a single position
 
-        return {"checked": len(positions), "alerts": alerts}
+        return {
+            "checked":          len(positions),
+            "alerts":           alerts,
+            "exits_triggered":  exits_triggered,
+        }
 
     # ── private ───────────────────────────────────────────────────────────────
 
-    def _check_position(self, trade: dict) -> bool:
-        """Return True if any alert was sent for this position."""
-        ticker     = trade["ticker"]
-        strike     = trade["strike"]
-        expiration = trade["expiration"]
-        entry      = trade.get("entry_price") or 0
-        play_type  = trade.get("play_type") or "long_call_leap"
+    def _check_position(self, trade: dict) -> tuple:
+        """Return (alert_fired: bool, exit_triggered: bool)."""
+        ticker      = trade["ticker"]
+        strike      = trade["strike"]
+        expiration  = trade["expiration"]
+        entry       = trade.get("entry_price") or 0
+        play_type   = trade.get("play_type") or "long_call_leap"
         option_type = "put" if play_type == "long_put" else "call"
+        opt_label   = f"${strike:.0f}{option_type[0].upper()}"
 
-        dte = self._compute_dte(expiration)
+        dte     = self._compute_dte(expiration)
         current = self._get_option_price(ticker, strike, expiration, option_type)
 
-        fired = False
+        fired      = False
+        is_exit    = False
 
         # DTE alerts (check even without live price)
         if dte is not None:
             if dte <= DTE_FORCE_CLOSE:
                 msg = (
-                    f"⚠️ <b>DTE FORCE CLOSE</b>\n"
-                    f"{ticker} ${strike:.0f}{option_type[0].upper()}  Exp: {expiration}\n"
-                    f"Only {dte} DTE remaining — consider closing now."
+                    f"⚡ <b>GAMMA WARNING — {dte} DTE</b>\n"
+                    f"{ticker} {opt_label}  Exp: {expiration}\n"
+                    f"Close now to avoid gamma risk.\n"
+                    f"Action: /close {ticker} {current:.2f} time_exit"
+                    if current else
+                    f"⚡ <b>GAMMA WARNING — {dte} DTE</b>\n"
+                    f"{ticker} {opt_label}  Exp: {expiration}\n"
+                    f"Close now to avoid gamma risk."
                 )
                 self.send(msg)
-                fired = True
+                fired   = True
+                is_exit = True
             elif dte <= DTE_ALERT_DAYS:
+                pnl_str = ""
+                if current and entry:
+                    gain = (current - entry) / entry
+                    pnl_str = f"  P&L: {gain:+.0%}"
                 msg = (
-                    f"⏰ <b>DTE ALERT</b>\n"
-                    f"{ticker} ${strike:.0f}{option_type[0].upper()}  Exp: {expiration}\n"
-                    f"{dte} DTE remaining."
+                    f"⏰ <b>DTE ALERT — {dte} days left</b>\n"
+                    f"{ticker} {opt_label}  Exp: {expiration}{pnl_str}"
                 )
                 self.send(msg)
                 fired = True
 
         if current is None or entry == 0:
-            return fired
+            return fired, is_exit
 
-        gain = (current - entry) / entry
+        # Update stored price
+        try:
+            self.db.update_price(ticker, current)
+        except Exception:
+            pass
 
-        # Determine thresholds based on play_type
+        gain             = (current - entry) / entry
+        pnl_per_contract = (current - entry) * 100
+        sign             = "+" if pnl_per_contract >= 0 else ""
+
+        # Determine thresholds
         if play_type == "long_put":
             target_thresh = PUT_TARGET_GAIN
             stop_thresh   = PUT_STOP_LOSS
@@ -96,31 +122,30 @@ class PositionMonitor:
             target_thresh = CALL_TARGET_GAIN
             stop_thresh   = CALL_STOP_LOSS
 
-        pnl_per_contract = (current - entry) * 100
-        sign = "+" if pnl_per_contract >= 0 else ""
-
         if gain >= target_thresh:
             msg = (
                 f"🎯 <b>PROFIT TARGET HIT</b>\n"
-                f"{ticker} ${strike:.0f}{option_type[0].upper()}  Exp: {expiration}\n"
+                f"{ticker} {opt_label}  Exp: {expiration}\n"
                 f"Entry: ${entry:.2f}  Now: ${current:.2f}\n"
                 f"Gain: {gain:+.0%}  P&L: {sign}${pnl_per_contract:.2f}/contract\n"
-                f"Consider closing."
+                f"Action: /close {ticker} {current:.2f} target"
             )
             self.send(msg)
-            fired = True
+            fired   = True
+            is_exit = True
         elif gain <= stop_thresh:
             msg = (
                 f"🛑 <b>STOP LOSS HIT</b>\n"
-                f"{ticker} ${strike:.0f}{option_type[0].upper()}  Exp: {expiration}\n"
+                f"{ticker} {opt_label}  Exp: {expiration}\n"
                 f"Entry: ${entry:.2f}  Now: ${current:.2f}\n"
                 f"Loss: {gain:+.0%}  P&L: {sign}${pnl_per_contract:.2f}/contract\n"
-                f"Consider closing."
+                f"Action: /close {ticker} {current:.2f} stop_loss"
             )
             self.send(msg)
-            fired = True
+            fired   = True
+            is_exit = True
 
-        return fired
+        return fired, is_exit
 
     def _get_option_price(self, symbol: str, strike: float, expiry: str,
                           option_type: str) -> Optional[float]:

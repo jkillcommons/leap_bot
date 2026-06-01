@@ -579,13 +579,14 @@ def mode_monitor():
 
     monitor = PositionMonitor(ldb, broker, _send)
     result = monitor.run()
-    checked = result.get("checked", 0)
+    checked  = result.get("checked", 0)
     n_alerts = result.get("alerts", 0)
+    n_exits  = result.get("exits_triggered", 0)
 
     if n_alerts == 0:
         print(f"  All {checked} position(s) healthy.")
     else:
-        print(f"\n  {n_alerts} alert(s) fired across {checked} position(s).")
+        print(f"\n  {n_alerts} alert(s), {n_exits} exit(s) triggered across {checked} position(s).")
     print()
 
 
