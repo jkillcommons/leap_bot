@@ -204,6 +204,39 @@ def mode_leaps(dry_run=False, symbol=None):
     print(f"  Target    : ${target_exit:.2f}/share  (${target_exit*100:.0f}/contract)  [+100%]")
     print(f"  Stop      : ${stop_loss:.2f}/share  (${stop_loss*100:.0f}/contract)  [-50%]")
 
+    # ── Phase 3: risk engine pre-check ───────────────────────────────────────
+    try:
+        import config as _cfg
+        from risk_engine import RiskEngine as _RE
+        _re = _RE(
+            account_size   = 100_000,
+            shared_db_path = _cfg.SHARED_DB_PATH,
+            leaps_db_path  = _cfg.LEAP_DB_PATH,
+        )
+        _vix = None
+        try:
+            if broker:
+                _vix = broker.get_vix() if hasattr(broker, "get_vix") else None
+        except Exception:
+            pass
+        _sector = cand.get("sector") or cand.get("gics_sector")
+        _re_result = _re.check_entry(
+            "long_call_leap", sym, _sector,
+            {"premium": mid, "contracts": 1, "delta": delta},
+            vix=_vix,
+        )
+        if _re_result.level != "GREEN":
+            print(f"\n  ⚠️  Risk: {_re_result.level}")
+            for w in _re_result.warnings:
+                print(f"     {w}")
+            for r in _re_result.reasons:
+                print(f"     BLOCKED: {r}")
+        if not _re_result.allowed:
+            print("  Trade blocked by risk engine. Aborted.\n")
+            return
+    except Exception as _re_exc:
+        print(f"  ⚠️  Risk check unavailable (non-fatal): {_re_exc}")
+
     # ── Interactive confirmation ──────────────────────────────────────────────
     try:
         answer = input(f"\n  Paper-trade {sym} ${strike:.0f}C @ ${mid:.2f}? [y/N] ").strip().lower()
@@ -507,6 +540,39 @@ def mode_puts(dry_run=False, symbol=None):
     if dry_run:
         print("\n  DRY RUN — no trade recorded.\n")
         return
+
+    # ── Phase 3: risk engine pre-check ───────────────────────────────────────
+    try:
+        import config as _cfg
+        from risk_engine import RiskEngine as _RE
+        _re = _RE(
+            account_size   = 100_000,
+            shared_db_path = _cfg.SHARED_DB_PATH,
+            leaps_db_path  = _cfg.LEAP_DB_PATH,
+        )
+        _vix = None
+        try:
+            _vix = broker.get_vix() if hasattr(broker, "get_vix") else None
+        except Exception:
+            pass
+        _sector = selected_cand.get("sector") or selected_cand.get("gics_sector") if selected_cand else None
+        _delta_val = float(put.delta) if put.delta else -0.70
+        _re_result = _re.check_entry(
+            "long_put", sym, _sector,
+            {"premium": mid, "contracts": 1, "delta": _delta_val},
+            vix=_vix,
+        )
+        if _re_result.level != "GREEN":
+            print(f"\n  ⚠️  Risk: {_re_result.level}")
+            for w in _re_result.warnings:
+                print(f"     {w}")
+            for r in _re_result.reasons:
+                print(f"     BLOCKED: {r}")
+        if not _re_result.allowed:
+            print("  Trade blocked by risk engine. Aborted.\n")
+            return
+    except Exception as _re_exc:
+        print(f"  ⚠️  Risk check unavailable (non-fatal): {_re_exc}")
 
     # ── Interactive confirm ───────────────────────────────────────────────────
     try:
@@ -823,6 +889,141 @@ def mode_check_leaps():
     print(f"\n  {closed} position(s) closed.\n")
 
 
+def mode_diagonal(dry_run=False, symbol=None):
+    """
+    Poor Man's Covered Call (PMCC / Diagonal Spread).
+    Long deep ITM call (≥180 DTE, δ≥0.75) + Short OTM call (25-50 DTE, δ 0.20-0.35).
+    """
+    import config
+    from chain.diagonal_chain import DiagonalChain
+    from broker.factory import make_broker
+
+    print(f"\n{'='*64}")
+    print("  Diagonal Spread (PMCC) Scanner" + (" (DRY RUN)" if dry_run else ""))
+    print(f"{'='*64}")
+
+    try:
+        broker = make_broker()
+    except Exception as e:
+        print(f"  Broker init failed: {e}\n")
+        return
+
+    # Resolve symbol universe
+    if symbol:
+        symbols = [symbol.upper()]
+        print(f"  Symbol override: {symbols[0]}\n")
+    else:
+        import db.shared_db as sdb
+        recs = sdb.get_leap_recommendations(20)
+        symbols = [r["ticker"] for r in recs if r.get("ticker")][:10]
+        if not symbols:
+            print("  No candidates in screener DB.\n")
+            return
+        print(f"  Scanning {len(symbols)} screener candidates…\n")
+
+    diag_chain = DiagonalChain(broker)
+    found = None
+    found_sym = None
+
+    for sym in symbols:
+        print(f"  {sym}…", end=" ", flush=True)
+        try:
+            price = broker.get_latest_price(sym)
+            if not price:
+                print("no price")
+                continue
+            cand = diag_chain.select(sym, price)
+            if cand:
+                print(f"✅  net debit ${cand.net_debit:.2f}  monthly yield {cand.monthly_yield_pct*100:.1f}%")
+                found = cand
+                found_sym = sym
+                break
+            else:
+                print("no valid diagonal")
+        except Exception as e:
+            print(f"error: {e}")
+
+    if not found:
+        print("\n  No diagonal spread candidate passed all filters.\n")
+        return
+
+    print(f"\n{'='*64}")
+    print("  ✅ DIAGONAL SPREAD CANDIDATE")
+    print(f"{'='*64}")
+    print(found.display())
+
+    if dry_run:
+        print("\n  DRY RUN — no trade recorded.\n")
+        return
+
+    # ── Risk check ────────────────────────────────────────────────────────────
+    try:
+        from risk_engine import RiskEngine as _RE
+        _re = _RE(
+            account_size   = 100_000,
+            shared_db_path = config.SHARED_DB_PATH,
+            leaps_db_path  = config.LEAP_DB_PATH,
+        )
+        _vix = None
+        try:
+            _vix = broker.get_vix() if hasattr(broker, "get_vix") else None
+        except Exception:
+            pass
+        _re_result = _re.check_entry(
+            "diagonal_spread", found_sym, None,
+            {"net_debit": found.net_debit, "contracts": 1, "delta": found.long_delta},
+            vix=_vix,
+        )
+        if _re_result.level != "GREEN":
+            print(f"\n  ⚠️  Risk: {_re_result.level}")
+            for w in _re_result.warnings:
+                print(f"     {w}")
+            for r in _re_result.reasons:
+                print(f"     BLOCKED: {r}")
+        if not _re_result.allowed:
+            print("  Trade blocked by risk engine. Aborted.\n")
+            return
+    except Exception as _re_exc:
+        print(f"  ⚠️  Risk check unavailable (non-fatal): {_re_exc}")
+
+    # ── Confirm and log ───────────────────────────────────────────────────────
+    try:
+        answer = input(
+            f"\n  Paper-trade diagonal {found_sym} "
+            f"${found.long_strike:.0f}C/{found.short_strike:.0f}C "
+            f"@ net debit ${found.net_debit:.2f}? [y/N] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer != "y":
+        print("  Aborted.\n")
+        return
+
+    # Log as a paper trade — long leg entry; store net_debit as entry_price
+    trade_id = ldb.add_paper_trade(
+        ticker           = found_sym,
+        strike           = found.long_strike,
+        expiration       = found.long_expiration,
+        entry_price      = found.net_debit,
+        breakeven        = found.breakeven,
+        target_exit      = round(found.net_debit * 1.50, 2),  # 50% gain target
+        notes            = (
+            f"diagonal; long=${found.long_strike:.0f}C {found.long_expiration}; "
+            f"short=${found.short_strike:.0f}C {found.short_expiration}; "
+            f"monthly_yield={found.monthly_yield_pct*100:.1f}%"
+        ),
+        contracts        = 1,
+        play_type        = "diagonal_spread",
+        delta_at_entry   = found.long_delta,
+        stop_loss_price  = round(found.net_debit * 0.50, 2),  # 50% max loss
+    )
+    journal_id  = ldb.get_journal_id(trade_id)
+    journal_str = f" | Journal #{journal_id}" if journal_id else ""
+    print(f"\n  ✅ Diagonal spread logged (id={trade_id}{journal_str}).")
+    print(f"  Net debit: ${found.net_debit:.2f} | Monthly yield: {found.monthly_yield_pct*100:.1f}%\n")
+
+
 MODES = {
     "leaps":      None,          # handled specially — supports --dry-run and --symbol
     "watchlist":  lambda: mode_watchlist(),
@@ -835,6 +1036,7 @@ MODES = {
     "check_puts":  lambda: mode_check_puts(),
     "check_leaps": lambda: mode_check_leaps(),
     "monitor":    lambda: mode_monitor(),
+    "diagonal":   None,          # handled specially — supports --dry-run and --symbol
 }
 
 
@@ -869,5 +1071,8 @@ if __name__ == "__main__":
     elif args.mode == "leaps":
         mode_leaps(dry_run=args.dry_run,
                    symbol=args.symbol.upper() if args.symbol else None)
+    elif args.mode == "diagonal":
+        mode_diagonal(dry_run=args.dry_run,
+                      symbol=args.symbol.upper() if args.symbol else None)
     else:
         MODES[args.mode]()

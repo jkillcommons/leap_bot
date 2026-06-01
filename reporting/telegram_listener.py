@@ -1158,6 +1158,62 @@ def cmd_put_scan(args, chat_id):
     send_message(msg, chat_id=chat_id)
 
 
+def cmd_risk(args, chat_id):
+    """Show portfolio risk snapshot from the risk engine."""
+    try:
+        import config
+        from risk_engine import RiskEngine
+        re = RiskEngine(
+            account_size   = 100_000,
+            shared_db_path = config.SHARED_DB_PATH,
+            leaps_db_path  = config.LEAP_DB_PATH,
+        )
+        snap = re.get_portfolio_snapshot()
+        cb = snap.get("circuit_breaker")
+        cb_line = f"\n⛔ Circuit breaker: {cb}" if cb else ""
+        msg = (
+            f"📊 *Risk Snapshot*\n\n"
+            f"Heat: ${snap['heat_dollars']:,.0f}  ({snap['heat_pct']*100:.1f}%)  {snap['heat_status']}\n"
+            f"Delta: {snap['portfolio_delta']:+.0f}  {snap['delta_status']}\n"
+            f"MTD P&L: ${snap['mtd_pnl']:+,.0f}  ({snap['mtd_pct']*100:.1f}%)  {snap['drawdown_status']}\n"
+            f"Consecutive losses: {snap['consecutive_losses']}{cb_line}"
+        )
+        send_message(msg, chat_id=chat_id)
+    except Exception as e:
+        send_message(f"⚠️ Risk engine error: {e}", chat_id=chat_id)
+
+
+def cmd_pause(args, chat_id):
+    """Manually trigger circuit breaker (48-hour pause)."""
+    try:
+        import config
+        from risk_engine import RiskEngine
+        from pathlib import Path
+        from datetime import datetime, timedelta
+        cb_file = Path.home() / ".zulucare_circuit_breaker"
+        pause_until = datetime.now() + timedelta(hours=48)
+        cb_file.write_text(pause_until.isoformat())
+        send_message(f"⛔ Manual pause activated — trading paused until {pause_until.strftime('%Y-%m-%d %H:%M')}.\nUse /resume to clear.", chat_id=chat_id)
+    except Exception as e:
+        send_message(f"⚠️ Pause error: {e}", chat_id=chat_id)
+
+
+def cmd_resume(args, chat_id):
+    """Clear circuit breaker and resume trading."""
+    try:
+        import config
+        from risk_engine import RiskEngine
+        re = RiskEngine(
+            account_size   = 100_000,
+            shared_db_path = config.SHARED_DB_PATH,
+            leaps_db_path  = config.LEAP_DB_PATH,
+        )
+        result = re.resume_circuit_breaker()
+        send_message(f"✅ {result}", chat_id=chat_id)
+    except Exception as e:
+        send_message(f"⚠️ Resume error: {e}", chat_id=chat_id)
+
+
 COMMANDS = {
     "/help":            cmd_help,
     "/leaps":           cmd_leaps,
@@ -1179,6 +1235,9 @@ COMMANDS = {
     "/put_scan":        cmd_put_scan,
     "/leaps_status":    cmd_leaps_status,
     "/monitor":         cmd_monitor,
+    "/risk":            cmd_risk,
+    "/pause":           cmd_pause,
+    "/resume":          cmd_resume,
 }
 
 

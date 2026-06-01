@@ -122,6 +122,10 @@ case "$cmd" in
     monitor)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode monitor
         ;;
+    diagonal)
+        # Supports: lbot diagonal [--dry-run] [--symbol SYM]
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode diagonal "${@:2}"
+        ;;
     python)
         # lbot python -c "..." or lbot python script.py
         cd "$SCRIPT_DIR" && "$PYTHON" "${@:2}"
@@ -148,6 +152,9 @@ case "$cmd" in
         echo "  puts --symbol SYM      Override screener, scan specific symbol"
         echo "  check_puts             Check open puts for profit/loss/time exits
   check_leaps            Update LEAP prices + check for target/stop exits"
+        echo "  diagonal               Scan PMCC diagonal spread candidates, paper-trade selected
+  diagonal --dry-run     Scan without writing any trades
+  diagonal --symbol SYM  Override screener, trade specific symbol"
         echo "  monitor                Check all open positions for stop/target/DTE alerts"
         echo "  python [args...]       Run python in the bot's directory"
         ;;
