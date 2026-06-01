@@ -1140,11 +1140,11 @@ def cmd_put_scan(args, chat_id):
     mid = put.mid_price or 0
     cost = round(mid * 100, 2)
 
-    iv_str = f"{put.implied_volatility*100:.0f}%" if put.implied_volatility else "—"
+    iv_str = f"{put.iv*100:.0f}%" if put.iv else "—"
     msg = (
         f"🐻 <b>PUT CANDIDATE — {symbol}</b>\n"
         f"Underlying: ${price:.2f}\n"
-        f"Strike: ${put.strike:.0f}P  Exp: {put.expiration_date}  DTE: {put.dte}\n"
+        f"Strike: ${put.strike:.0f}P  Exp: {put.expiration}  DTE: {put.dte}\n"
         f"Delta: {_fmt(put.delta)}  IV: {iv_str}\n"
         f"Bid/Ask: ${_fmt(put.bid)} / ${_fmt(put.ask)}\n"
         f"Mid: ${mid:.2f} (${cost:.0f}/contract)\n"
@@ -1153,7 +1153,7 @@ def cmd_put_scan(args, chat_id):
         f"Target: ${put.target_exit:.2f}/share (${put.target_exit*100:.0f}/contract)\n"
         f"Stop: ${put.stop_loss:.2f}/share (${put.stop_loss*100:.0f}/contract)\n"
         f"OI: {put.open_interest}\n\n"
-        f"To enter: /enter {symbol} {put.strike:.0f} {put.expiration_date} {mid:.2f}"
+        f"To enter: /enter {symbol} {put.strike:.0f} {put.expiration} {mid:.2f}"
     )
     send_message(msg, chat_id=chat_id)
 

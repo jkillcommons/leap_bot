@@ -361,9 +361,9 @@ def mode_puts(dry_run=False, symbol=None):
         print(f"  Screener  : trend={ts_str}  IVR={ivr_str}  rec={pr}")
     print(f"  Underlying: ${price:.2f}")
     print(f"  Strike    : ${put.strike:.0f}P")
-    print(f"  Expiration: {put.expiration_date}  ({put.dte} DTE)")
+    print(f"  Expiration: {put.expiration}  ({put.dte} DTE)")
     print(f"  Delta     : {_fmt(put.delta)}")
-    print(f"  IV        : {_fmt(put.implied_volatility, suffix='%') if put.implied_volatility else '—'}")
+    print(f"  IV        : {_fmt(put.iv, suffix='%') if put.iv else '—'}")
     print(f"  Bid/Ask   : ${_fmt(put.bid)} / ${_fmt(put.ask)}")
     print(f"  Mid       : ${mid:.2f}  (${mid*100:.0f}/contract)")
     print(f"  Intrinsic : ${put.intrinsic:.2f}")
@@ -396,7 +396,7 @@ def mode_puts(dry_run=False, symbol=None):
         entry_price      = mid,
         breakeven        = breakeven_val,
         target_exit      = put.target_exit,
-        notes            = f"put scan; delta={put.delta}; iv={put.implied_volatility}",
+        notes            = f"put scan; delta={put.delta}; iv={put.iv}",
         contracts        = 1,
         play_type        = "long_put",
         delta_at_entry   = put.delta,
