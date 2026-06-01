@@ -109,14 +109,18 @@ case "$cmd" in
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode broker
         ;;
     puts)
-        # Optional --dry-run flag: lbot puts --dry-run
-        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode puts ${2:+"$2"}
+        # Supports: lbot puts [--dry-run] [--symbol SYM]
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode puts "${@:2}"
         ;;
     check_puts)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode check_puts
         ;;
     monitor)
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode monitor
+        ;;
+    python)
+        # lbot python -c "..." or lbot python script.py
+        cd "$SCRIPT_DIR" && "$PYTHON" "${@:2}"
         ;;
     help|--help|-h)
         echo "Usage: lbot <command>"
@@ -131,12 +135,14 @@ case "$cmd" in
         echo "  watchlist  Print LEAP watchlist"
         echo "  trades     Print open paper trades"
         echo "  summary    Print P&L summary"
-        echo "  chain SYM        Fetch live option chain, show best LEAP candidate"
-        echo "  broker           Show broker connection status"
-        echo "  puts             Scan bearish candidates, paper-trade best put"
-        echo "  puts --dry-run   Scan without writing any trades"
-        echo "  check_puts       Check open puts for profit/loss/time exits
-  monitor          Check all open positions for stop/target/DTE alerts"
+        echo "  chain SYM              Fetch live option chain, show best LEAP candidate"
+        echo "  broker                 Show broker connection status"
+        echo "  puts                   Scan bearish candidates, paper-trade best put"
+        echo "  puts --dry-run         Scan without writing any trades"
+        echo "  puts --symbol SYM      Override screener, scan specific symbol"
+        echo "  check_puts             Check open puts for profit/loss/time exits"
+        echo "  monitor                Check all open positions for stop/target/DTE alerts"
+        echo "  python [args...]       Run python in the bot's directory"
         ;;
     *)
         echo "Unknown command: $cmd"
