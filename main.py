@@ -721,6 +721,108 @@ def mode_monitor():
     print()
 
 
+def mode_check_leaps():
+    """Update current prices for open LEAP positions; close on target/stop hit."""
+    import config
+    from broker.factory import make_broker
+
+    open_leaps = ldb.get_open_trades(play_type="long_call_leap")
+    if not open_leaps:
+        print("No open LEAP positions.")
+        return
+
+    print(f"\n{'='*64}")
+    print("  LEAP Exit Monitor")
+    print(f"{'='*64}")
+
+    try:
+        broker = make_broker()
+    except Exception as e:
+        print(f"  Broker init failed: {e}\n")
+        return
+
+    from datetime import date as _date
+    today = _date.today()
+    closed = 0
+
+    for trade in open_leaps:
+        ticker     = trade["ticker"]
+        entry      = trade["entry_price"]
+        target     = trade.get("target_exit") or trade.get("target_price")
+        stop       = trade.get("stop_loss_price")
+        contracts  = trade.get("contracts") or 1
+        expiration = trade["expiration"]
+        strike     = trade["strike"]
+
+        try:
+            dte_remaining = (_date.fromisoformat(expiration) - today).days
+        except (ValueError, TypeError):
+            dte_remaining = 999
+
+        # Fetch current option mid from broker
+        current_mid = None
+        try:
+            chain = broker.get_option_chain(
+                ticker, "call",
+                min_dte=0,
+                max_dte=getattr(config, "LEAP_EXP_MAX_DAYS", 450) + 60,
+            )
+            chain_dicts = [c.to_dict() if hasattr(c, "to_dict") else c for c in chain]
+            match = next(
+                (c for c in chain_dicts
+                 if abs(c.get("strike", 0) - strike) < 0.01
+                 and str(c.get("expiration_date", "")).startswith(expiration[:7])),
+                None,
+            )
+            current_mid = match.get("mid") if match else None
+        except Exception as e:
+            print(f"  {ticker}: chain lookup error — {e}")
+
+        if current_mid is None:
+            print(f"  {ticker} ${strike:.0f}C: no current price — skipping")
+            continue
+
+        # Always persist current price so dashboard P&L stays fresh
+        ldb.update_price(ticker, current_mid)
+
+        gain_pct = (current_mid - entry) / entry if entry else 0
+        pnl_est  = (current_mid - entry) * 100 * contracts
+
+        exit_reason = None
+        if target and current_mid >= target:
+            exit_reason = f"profit target hit ({gain_pct:+.0%})"
+        elif stop and current_mid <= stop:
+            exit_reason = f"stop loss hit ({gain_pct:+.0%})"
+
+        status_line = (f"  {ticker} ${strike:.0f}C  "
+                       f"entry=${entry:.2f}  now=${current_mid:.2f}  "
+                       f"gain={gain_pct:+.0%}  DTE={dte_remaining}")
+
+        if exit_reason:
+            ldb.close_trade(ticker, current_mid, notes=exit_reason)
+            print(f"{status_line}")
+            print(f"    ⚠️  CLOSED — {exit_reason}  P&L=${pnl_est:+.2f}")
+            closed += 1
+            # Telegram notification (non-fatal)
+            try:
+                if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_ID:
+                    import urllib.request, urllib.parse
+                    msg = (f"🔔 LEAP Exit\n{ticker} ${strike:.0f}C\n"
+                           f"{exit_reason}\nEntry: ${entry:.2f}  Exit: ${current_mid:.2f}\n"
+                           f"P&L: ${pnl_est:+.2f}")
+                    urllib.request.urlopen(
+                        f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage?"
+                        + urllib.parse.urlencode({"chat_id": config.TELEGRAM_CHAT_ID, "text": msg}),
+                        timeout=10,
+                    )
+            except Exception:
+                pass
+        else:
+            print(f"{status_line}  — holding")
+
+    print(f"\n  {closed} position(s) closed.\n")
+
+
 MODES = {
     "leaps":      None,          # handled specially — supports --dry-run and --symbol
     "watchlist":  lambda: mode_watchlist(),
@@ -730,7 +832,8 @@ MODES = {
     "chain":      None,          # handled specially — needs --symbol
     "broker":     lambda: mode_broker(),
     "puts":       None,          # handled specially — supports --dry-run
-    "check_puts": lambda: mode_check_puts(),
+    "check_puts":  lambda: mode_check_puts(),
+    "check_leaps": lambda: mode_check_leaps(),
     "monitor":    lambda: mode_monitor(),
 }
 
