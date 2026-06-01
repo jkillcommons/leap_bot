@@ -37,16 +37,73 @@ def print_table(rows, columns):
 
 
 def mode_leaps():
-    recs = sdb.get_leap_recommendations(20)
-    if not recs:
-        print("No LEAP recommendations in screener DB yet.")
+    import config
+
+    print(f"\n{'='*64}")
+    print("  LEAP Bot — Pre-Flight Checks")
+    print(f"{'='*64}")
+
+    # a. Data broker connectivity
+    broker = None
+    try:
+        from broker.factory import make_broker
+        broker = make_broker()
+        spy = broker.get_latest_price("SPY")
+        if spy:
+            print(f"  ✅ Data broker    : {config.DATA_BROKER}  (SPY ${spy:.2f})")
+        else:
+            print(f"  ⚠️  Data broker    : {config.DATA_BROKER}  — SPY price unavailable")
+    except Exception as e:
+        print(f"  ⚠️  Data broker    : {e}")
+
+    # b. Alpaca paper account balance
+    try:
+        if broker is not None:
+            acct = broker.get_account()
+            cash = float(acct.get("cash") or acct.get("buying_power") or 0)
+            print(f"  ✅ Paper account  : ${cash:,.0f} cash available")
+        else:
+            print("  ⚠️  Paper account  : broker unavailable")
+    except Exception as e:
+        print(f"  ⚠️  Paper account  : {e}")
+
+    # c. Open positions count
+    open_trades = ldb.get_open_trades()
+    print(f"  Open LEAP positions: {len(open_trades)}")
+
+    # d. Capital deployed
+    total_deployed = sum(
+        t.get("entry_price", 0) * 100 * t.get("contracts", 1)
+        for t in open_trades
+    )
+    print(f"  Capital in LEAPs  : ${total_deployed:,.0f}")
+
+    # ── Candidates ────────────────────────────────────────────────────────────
+    all_recs = sdb.get_leap_recommendations(20)
+    if not all_recs:
+        print("\nNo LEAP recommendations in screener DB yet.")
         return
-    cols = ["ticker", "leap_score", "suggested_delta", "strike", "exp_range",
-            "ask_price", "mid_price", "breakeven", "iv_level",
-            "trend_score", "risk_rating", "run_date"]
-    print(f"\n{'='*60}")
-    print("  LEAP Recommendations")
-    print(f"{'='*60}")
+
+    # Filter by configured thresholds
+    recs = [
+        r for r in all_recs
+        if (r.get("leap_score") or 0) >= config.LEAP_SCORE_MIN
+        and (r.get("trend_score") or 0) >= config.TREND_SCORE_MIN
+    ]
+
+    print(f"\n  {len(recs)}/{len(all_recs)} candidates pass filters "
+          f"(LEAP≥{config.LEAP_SCORE_MIN}, Trend≥{config.TREND_SCORE_MIN})\n")
+
+    if not recs:
+        print("  No candidates pass current filters.")
+        return
+
+    cols = ["ticker", "leap_score", "trend_score", "suggested_delta", "strike",
+            "exp_range", "mid_price", "breakeven", "iv_rank",
+            "play_recommendation", "risk_rating", "run_date"]
+    print(f"{'='*64}")
+    print("  LEAP Recommendations (filtered)")
+    print(f"{'='*64}")
     print_table(recs, cols)
     print()
 

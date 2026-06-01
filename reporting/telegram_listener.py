@@ -190,34 +190,58 @@ def cmd_confirm(args, chat_id):
 
 def cmd_enter(args, chat_id):
     if len(args) < 4:
-        send_message("Usage: /enter SYMBOL STRIKE EXP PRICE\nExample: /enter QQQ 480 2027-01-15 18.50", chat_id=chat_id)
+        send_message(
+            "Usage: /enter SYMBOL STRIKE EXP PRICE [DELTA] [IV]\n"
+            "Example: /enter AAPL 180 2027-01-15 12.50 0.82 0.28",
+            chat_id=chat_id,
+        )
         return
     try:
-        ticker = args[0].upper()
-        strike = float(args[1])
-        expiration = args[2]
+        ticker      = args[0].upper()
+        strike      = float(args[1])
+        expiration  = args[2]
         entry_price = float(args[3])
+        delta       = float(args[4]) if len(args) > 4 else None
+        iv_rank_val = float(args[5]) if len(args) > 5 else None
         datetime.strptime(expiration, "%Y-%m-%d")
     except ValueError as e:
         send_message(f"❌ Invalid input: {e}", chat_id=chat_id)
         return
 
-    breakeven = strike + entry_price
+    from datetime import date as _date
+    try:
+        dte_days = (_date.fromisoformat(expiration) - _date.today()).days
+    except (ValueError, TypeError):
+        dte_days = None
+
+    breakeven       = strike + entry_price
     stop_loss_price = round(entry_price * 0.50, 2)
     target_price    = round(entry_price * 2.00, 2)
+
     trade_id = ldb.add_paper_trade(
         ticker, strike, expiration, entry_price, breakeven,
-        target_exit=target_price, stop_loss_price=stop_loss_price,
+        target_exit=target_price,
+        stop_loss_price=stop_loss_price,
+        delta_at_entry=delta,
+        iv_rank_at_entry=iv_rank_val,
     )
     journal_id = ldb.get_journal_id(trade_id)
-    journal_line = f"Journal ID: {journal_id}\n" if journal_id else ""
+
+    delta_str = f"{delta:.2f}" if delta is not None else "—"
+    iv_str    = f"{iv_rank_val:.2f}" if iv_rank_val is not None else "—"
+    jid_line  = f"Journal ID: {journal_id}\n" if journal_id else ""
+
     send_message(
-        f"📝 <b>PAPER TRADE ENTERED</b>\n"
-        f"{ticker}  Strike: ${strike}  Exp: {expiration}\n"
-        f"Entry: ${entry_price}  Breakeven: ${breakeven:.2f}\n"
-        f"Stop loss: ${stop_loss_price}  Target: ${target_price}\n"
+        f"📝 <b>LEAP ENTERED</b>\n"
+        f"{ticker}  {strike:.0f}C  Exp: {expiration}\n"
+        f"Entry: ${entry_price}  Delta: {delta_str}  IV: {iv_str}\n"
+        f"Stop loss: ${stop_loss_price:.2f}  (50% loss)\n"
+        f"Target:    ${target_price:.2f}  (100% gain)\n"
+        f"Breakeven: ${breakeven:.2f}\n"
         f"Trade ID: {trade_id}\n"
-        f"{journal_line}",
+        f"{jid_line}"
+        f"\nUpdate price: /update {ticker} [price]\n"
+        f"Close: /close {ticker} [price] [reason]",
         chat_id=chat_id,
     )
 

@@ -21,12 +21,32 @@ def get_leap_recommendations(n=20):
     try:
         conn = _connect()
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            """SELECT * FROM leap_recommendations
-               WHERE run_date = (SELECT MAX(run_date) FROM leap_recommendations)
-               GROUP BY ticker
-               ORDER BY leap_score DESC LIMIT ?""", (n,)
-        )
+        try:
+            # Enrich with iv_rank and play_recommendation from the recommendations table
+            # (added in Phase 1 Prompt A/B — gracefully falls back if columns absent)
+            cur = conn.execute(
+                """
+                SELECT lr.*, r.iv_rank, r.play_recommendation
+                FROM leap_recommendations lr
+                LEFT JOIN recommendations r
+                    ON r.symbol = lr.ticker
+                    AND r.created_at = (
+                        SELECT MAX(created_at) FROM recommendations
+                        WHERE symbol = lr.ticker
+                    )
+                WHERE lr.run_date = (SELECT MAX(run_date) FROM leap_recommendations)
+                GROUP BY lr.ticker
+                ORDER BY lr.leap_score DESC LIMIT ?
+                """, (n,)
+            )
+        except Exception:
+            # Fallback: recommendations table absent or older schema
+            cur = conn.execute(
+                """SELECT * FROM leap_recommendations
+                   WHERE run_date = (SELECT MAX(run_date) FROM leap_recommendations)
+                   GROUP BY ticker
+                   ORDER BY leap_score DESC LIMIT ?""", (n,)
+            )
         rows = [dict(r) for r in cur.fetchall()]
         conn.close()
         return rows

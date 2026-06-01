@@ -5,23 +5,27 @@ from config import LEAP_DB_PATH
 
 _CREATE_SQL = """
 CREATE TABLE IF NOT EXISTS paper_trades (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticker       TEXT NOT NULL,
-    entered_date TEXT NOT NULL,
-    strike       REAL NOT NULL,
-    expiration   TEXT NOT NULL,
-    contracts    INTEGER DEFAULT 1,
-    entry_price  REAL NOT NULL,
-    current_price REAL,
-    breakeven    REAL,
-    target_exit  REAL,
-    status       TEXT DEFAULT 'open',
-    exit_price   REAL,
-    exit_date    TEXT,
-    pnl          REAL,
-    notes        TEXT,
-    journal_id   INTEGER,    -- trade_journal.id in wheel_research.db
-    play_type    TEXT DEFAULT 'long_call_leap'
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker            TEXT NOT NULL,
+    entered_date      TEXT NOT NULL,
+    strike            REAL NOT NULL,
+    expiration        TEXT NOT NULL,
+    contracts         INTEGER DEFAULT 1,
+    entry_price       REAL NOT NULL,
+    current_price     REAL,
+    breakeven         REAL,
+    target_exit       REAL,
+    status            TEXT DEFAULT 'open',
+    exit_price        REAL,
+    exit_date         TEXT,
+    pnl               REAL,
+    notes             TEXT,
+    journal_id        INTEGER,    -- trade_journal.id in wheel_research.db
+    play_type         TEXT DEFAULT 'long_call_leap',
+    delta_at_entry    REAL,
+    iv_rank_at_entry  REAL,
+    stop_loss_price   REAL,
+    target_price      REAL        -- redundant alias for target_exit; kept for journal display
 );
 """
 
@@ -51,6 +55,7 @@ def _connect():
         "ALTER TABLE paper_trades ADD COLUMN delta_at_entry REAL",
         "ALTER TABLE paper_trades ADD COLUMN iv_rank_at_entry REAL",
         "ALTER TABLE paper_trades ADD COLUMN stop_loss_price REAL",
+        "ALTER TABLE paper_trades ADD COLUMN target_price REAL",
     ):
         try:
             conn.execute(migration)
