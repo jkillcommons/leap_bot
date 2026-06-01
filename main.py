@@ -363,7 +363,7 @@ def mode_puts(dry_run=False, symbol=None):
     print(f"  Strike    : ${put.strike:.0f}P")
     print(f"  Expiration: {put.expiration}  ({put.dte} DTE)")
     print(f"  Delta     : {_fmt(put.delta)}")
-    print(f"  IV        : {_fmt(put.iv, suffix='%') if put.iv else '—'}")
+    print(f"  IV        : {put.iv*100:.0f}% " if put.iv else "  IV        : —")
     print(f"  Bid/Ask   : ${_fmt(put.bid)} / ${_fmt(put.ask)}")
     print(f"  Mid       : ${mid:.2f}  (${mid*100:.0f}/contract)")
     print(f"  Intrinsic : ${put.intrinsic:.2f}")
