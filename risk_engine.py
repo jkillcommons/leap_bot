@@ -23,13 +23,16 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Account size — override via RISK_ACCOUNT_SIZE env var
+# Account size — checks WHEEL_ACCOUNT_SIZE, RISK_ACCOUNT_SIZE, then defaults to $1M
 def _default_account_size() -> float:
-    val = os.getenv("RISK_ACCOUNT_SIZE", "")
-    try:
-        return float(val) if val else 100_000.0
-    except ValueError:
-        return 100_000.0
+    for key in ("WHEEL_ACCOUNT_SIZE", "RISK_ACCOUNT_SIZE"):
+        val = os.getenv(key, "")
+        try:
+            if val:
+                return float(val)
+        except ValueError:
+            pass
+    return 1_000_000.0
 
 # Risk thresholds — calibrated for wheel strategy (2-3 concurrent CSPs normal)
 # Override via env: HEAT_WARN_PCT, HEAT_BLOCK_PCT
