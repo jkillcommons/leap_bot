@@ -123,7 +123,7 @@ case "$cmd" in
         cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode monitor
         ;;
     condor)
-        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode condor ${2:+"$2"}
+        cd "$SCRIPT_DIR" && "$PYTHON" main.py --mode condor "${@:2}"
         ;;
     diagonal)
         # Supports: lbot diagonal [--dry-run] [--symbol SYM]
