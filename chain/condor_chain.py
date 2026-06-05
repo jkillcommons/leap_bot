@@ -72,7 +72,7 @@ class CondorChain:
     WING_WIDTH_STOCK =  5.0
     ETF_SYMBOLS      = {"SPY", "QQQ", "IWM", "DIA", "GLD", "TLT", "XLF", "XLE"}
     TARGET_DELTA     = 0.17    # ideal short strike delta
-    MIN_CREDIT_PCT   = 0.25    # min credit as fraction of wing width
+    MIN_CREDIT_PCT   = 0.20    # min credit as fraction of wing width
     MIN_DTE          = 21
     MAX_DTE          = 45
 
