@@ -94,26 +94,38 @@ class CondorChain:
                            symbol, self.MIN_DTE, self.MAX_DTE)
             return None
 
-        # Fetch full chain (calls + puts) for chosen expiration
+        # Fetch chain for short strike selection (spread-filtered for liquidity)
+        # and again unfiltered for wing legs (far-OTM wings have naturally wide spreads)
         calls = self.broker.get_option_chain(
             symbol, "call", min_dte=self.MIN_DTE, max_dte=self.MAX_DTE
         )
         puts = self.broker.get_option_chain(
             symbol, "put", min_dte=self.MIN_DTE, max_dte=self.MAX_DTE
         )
+        calls_wide = self.broker.get_option_chain(
+            symbol, "call", min_dte=self.MIN_DTE, max_dte=self.MAX_DTE, max_spread_pct=1.0
+        )
+        puts_wide = self.broker.get_option_chain(
+            symbol, "put", min_dte=self.MIN_DTE, max_dte=self.MAX_DTE, max_spread_pct=1.0
+        )
 
-        # Filter to chosen expiration only
-        calls = [c for c in calls if str(getattr(c, "expiration_date", "")).startswith(exp)]
-        puts  = [c for c in puts  if str(getattr(c, "expiration_date", "")).startswith(exp)]
+        # Filter all chains to chosen expiration only
+        calls      = [c for c in calls      if str(getattr(c, "expiration_date", "")).startswith(exp)]
+        puts       = [c for c in puts       if str(getattr(c, "expiration_date", "")).startswith(exp)]
+        calls_wide = [c for c in calls_wide if str(getattr(c, "expiration_date", "")).startswith(exp)]
+        puts_wide  = [c for c in puts_wide  if str(getattr(c, "expiration_date", "")).startswith(exp)]
 
         if not calls or not puts:
             logger.warning("[%s] CondorChain: empty chain for %s", symbol, exp)
             return None
 
         # Convert OptionContract objects to dicts for uniform handling
-        call_dicts = [c.to_dict() if hasattr(c, "to_dict") else c for c in calls]
-        put_dicts  = [c.to_dict() if hasattr(c, "to_dict") else c for c in puts]
+        call_dicts      = [c.to_dict() if hasattr(c, "to_dict") else c for c in calls]
+        put_dicts       = [c.to_dict() if hasattr(c, "to_dict") else c for c in puts]
+        call_dicts_wide = [c.to_dict() if hasattr(c, "to_dict") else c for c in calls_wide]
+        put_dicts_wide  = [c.to_dict() if hasattr(c, "to_dict") else c for c in puts_wide]
 
+        # Short strikes from spread-filtered chain (ensures liquidity)
         short_put  = self._pick_short_strike(put_dicts,  spot, "put")
         short_call = self._pick_short_strike(call_dicts, spot, "call")
 
@@ -125,8 +137,9 @@ class CondorChain:
         long_put_strike  = round(short_put["strike"]  - wing, 1)
         long_call_strike = round(short_call["strike"] + wing, 1)
 
-        long_put  = self._find_strike(put_dicts,  long_put_strike)
-        long_call = self._find_strike(call_dicts, long_call_strike)
+        # Wing strikes from unfiltered chain (far-OTM wings have naturally wide spreads)
+        long_put  = self._find_strike(puts_wide,  long_put_strike)
+        long_call = self._find_strike(calls_wide, long_call_strike)
 
         if not long_put or not long_call:
             logger.warning("[%s] CondorChain: wing strikes %.1f/%.1f not in chain",

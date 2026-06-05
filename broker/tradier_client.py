@@ -135,6 +135,7 @@ class TradierClient(BrokerInterface):
         max_dte: int = 730,
         underlying_price: Optional[float] = None,
         historical_vol: Optional[float] = None,
+        max_spread_pct: Optional[float] = None,
     ) -> List[OptionContract]:
         """
         Return Tradier LEAP call contracts for *symbol* in the DTE window.
@@ -209,7 +210,8 @@ class TradierClient(BrokerInterface):
                 # Spread filter
                 if bid and ask and mid:
                     spread_pct = (ask - bid) / mid
-                    if spread_pct > _MAX_SPREAD_PCT:
+                    _spread_limit = max_spread_pct if max_spread_pct is not None else _MAX_SPREAD_PCT
+                    if spread_pct > _spread_limit:
                         logger.debug(
                             "[%s] spread filter: strike=%.2f spread=%.0f%% — dropped",
                             symbol, float(opt.get("strike", 0)), spread_pct * 100,
