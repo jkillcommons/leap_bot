@@ -78,3 +78,6 @@ PUT_MAX_EXTRINSIC  = 0.40         # max extrinsic as fraction of mid (puts have 
 PUT_TARGET_GAIN = 0.75            # exit target: 75% gain
 PUT_MAX_LOSS    = 0.40            # stop loss: cut at 40% loss
 PUT_MAX_DTE_EXIT = 7              # time exit: close when ≤ 7 DTE remains
+
+# ── Paper account size override ──────────────────────────────────────────────
+PAPER_BUYING_POWER = float(os.getenv("PAPER_BUYING_POWER", "1000000"))

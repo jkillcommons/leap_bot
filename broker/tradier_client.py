@@ -359,13 +359,17 @@ class TradierClient(BrokerInterface):
                 "TRADIER_ACCOUNT_ID not set. "
                 "Find your account ID at https://developer.tradier.com/user/profile"
             )
-        data    = self._get(f"/accounts/{account_id}/balances")
+        import config as _cfg
+        paper_bp = getattr(_cfg, "PAPER_BUYING_POWER", None)
+
+        data     = self._get(f"/accounts/{account_id}/balances")
         balances = (data.get("balances") or {})
+        live_bp  = float(balances.get("margin", {}).get("option_buying_power")
+                         or balances.get("cash", {}).get("cash_available")
+                         or balances.get("option_buying_power", 0) or 0)
         return {
-            "buying_power":    float(balances.get("margin", {}).get("option_buying_power")
-                                     or balances.get("cash", {}).get("cash_available")
-                                     or balances.get("option_buying_power", 0) or 0),
-            "cash":            float(balances.get("total_cash", 0) or 0),
+            "buying_power":    paper_bp if paper_bp is not None else live_bp,
+            "cash":            paper_bp if paper_bp is not None else float(balances.get("total_cash", 0) or 0),
             "portfolio_value": float(balances.get("total_equity", 0) or 0),
             "equity":          float(balances.get("total_equity", 0) or 0),
         }
