@@ -1,9 +1,7 @@
 """
-broker/tradier_client.py — Tradier market-data adapter for leap_bot.
+broker/tradier_client.py — Tradier broker adapter for leap_bot.
 
-Implements BrokerInterface for market-data methods only (prices, history,
-option chain).  Execution methods raise NotImplementedError — use
-AlpacaBroker for order placement.
+Implements BrokerInterface for market-data AND account/execution methods.
 
 Key LEAP differences vs wheel_bot
 -----------------------------------
@@ -15,6 +13,7 @@ Key LEAP differences vs wheel_bot
 Environment variables
 ---------------------
     TRADIER_API_TOKEN   : Bearer token (sandbox or live)
+    TRADIER_ACCOUNT_ID  : Account ID for order placement / account queries
     TRADIER_PRODUCTION  : "true" to use live API (default: sandbox)
 
 Sandbox : https://sandbox.tradier.com/v1
@@ -345,24 +344,122 @@ class TradierClient(BrokerInterface):
             qty          = preview.contracts,
         )
 
-    # ── Account / execution stubs ─────────────────────────────────────────────
+    # ── Account / positions / orders ──────────────────────────────────────────
 
     def get_account(self) -> dict:
-        raise NotImplementedError("Use AlpacaBroker for account queries")
+        """
+        Fetch account balances from Tradier.
+
+        Returns dict with keys: buying_power, cash, portfolio_value, equity.
+        Requires TRADIER_ACCOUNT_ID env var.
+        """
+        account_id = os.environ.get("TRADIER_ACCOUNT_ID", "").strip()
+        if not account_id:
+            raise TradierError(
+                "TRADIER_ACCOUNT_ID not set. "
+                "Find your account ID at https://developer.tradier.com/user/profile"
+            )
+        data    = self._get(f"/accounts/{account_id}/balances")
+        balances = (data.get("balances") or {})
+        return {
+            "buying_power":    float(balances.get("margin", {}).get("option_buying_power")
+                                     or balances.get("cash", {}).get("cash_available")
+                                     or balances.get("option_buying_power", 0) or 0),
+            "cash":            float(balances.get("total_cash", 0) or 0),
+            "portfolio_value": float(balances.get("total_equity", 0) or 0),
+            "equity":          float(balances.get("total_equity", 0) or 0),
+        }
 
     def get_positions(self) -> Dict[str, dict]:
-        raise NotImplementedError("Use AlpacaBroker for positions")
+        """
+        Fetch open positions from Tradier.
+
+        Returns dict keyed by symbol with qty, avg_entry, market_val, unrealized.
+        Requires TRADIER_ACCOUNT_ID env var.
+        """
+        account_id = os.environ.get("TRADIER_ACCOUNT_ID", "").strip()
+        if not account_id:
+            raise TradierError("TRADIER_ACCOUNT_ID not set.")
+        data      = self._get(f"/accounts/{account_id}/positions")
+        positions = (data.get("positions") or {}).get("position") or []
+        if isinstance(positions, dict):
+            positions = [positions]
+        result: Dict[str, dict] = {}
+        for p in positions:
+            sym = p.get("symbol", "")
+            result[sym] = {
+                "qty":        float(p.get("quantity", 0)),
+                "avg_entry":  float(p.get("cost_basis", 0)) / max(float(p.get("quantity", 1)), 1),
+                "market_val": float(p.get("cost_basis", 0)),  # Tradier doesn't return real-time mkt val here
+                "unrealized": 0.0,  # not available in this endpoint
+            }
+        return result
 
     def get_open_orders(self) -> List[dict]:
-        raise NotImplementedError("Use AlpacaBroker for orders")
+        """
+        Fetch open/pending orders from Tradier.
+
+        Returns list of order dicts with keys: id, symbol, side, qty, status.
+        Requires TRADIER_ACCOUNT_ID env var.
+        """
+        account_id = os.environ.get("TRADIER_ACCOUNT_ID", "").strip()
+        if not account_id:
+            raise TradierError("TRADIER_ACCOUNT_ID not set.")
+        data   = self._get(f"/accounts/{account_id}/orders")
+        orders = (data.get("orders") or {}).get("order") or []
+        if isinstance(orders, dict):
+            orders = [orders]
+        return [
+            {
+                "id":     str(o.get("id", "")),
+                "symbol": o.get("option_symbol") or o.get("symbol", ""),
+                "side":   str(o.get("side", "")),
+                "qty":    float(o.get("quantity", 0)),
+                "status": str(o.get("status", "")),
+            }
+            for o in orders
+        ]
 
     def buy_to_open_call(self, option_symbol: str, contracts: int = 1,
                          limit_price: Optional[float] = None) -> OrderResult:
-        raise NotImplementedError(
-            "Use place_order(preview) for sandbox execution, "
-            "or AlpacaBroker for paper execution"
+        """Delegates to place_order() via a minimal preview-like object."""
+        from types import SimpleNamespace
+        preview = SimpleNamespace(
+            underlying_symbol=option_symbol[:6].rstrip(),
+            option_symbol=option_symbol,
+            contracts=contracts,
+            mid=limit_price,
         )
+        return self.place_order(preview)
 
     def sell_to_close_call(self, option_symbol: str, contracts: int = 1,
                            limit_price: Optional[float] = None) -> OrderResult:
-        raise NotImplementedError("Tradier sell-to-close not yet implemented")
+        """Submit a sell-to-close limit order via Tradier sandbox."""
+        account_id = os.environ.get("TRADIER_ACCOUNT_ID", "").strip()
+        if not account_id:
+            raise TradierError("TRADIER_ACCOUNT_ID not set.")
+        if not limit_price:
+            raise TradierError("limit_price required for sell_to_close_call")
+
+        payload = {
+            "class":         "option",
+            "symbol":        option_symbol[:6].rstrip(),
+            "option_symbol": option_symbol,
+            "side":          "sell_to_close",
+            "quantity":      str(contracts),
+            "type":          "limit",
+            "duration":      "day",
+            "price":         f"{limit_price:.2f}",
+        }
+        resp     = self._post(f"/accounts/{account_id}/orders", payload)
+        order    = resp.get("order") or {}
+        raw_id   = order.get("id")
+        if not raw_id:
+            raise TradierError(f"Tradier did not return an order ID. Response: {resp!r}")
+        return OrderResult(
+            order_id     = str(raw_id),
+            status       = str(order.get("status", "ok")),
+            filled_price = limit_price,
+            symbol       = option_symbol,
+            qty          = contracts,
+        )

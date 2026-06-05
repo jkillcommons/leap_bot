@@ -5,23 +5,20 @@ get_broker()    → cached BrokerInterface for the current BROKER_MODE
 make_broker()   → always creates a fresh instance (use for tests)
 reset_broker()  → clear the cache (call after .env changes in tests)
 
+TradierClient is the sole broker for all modes.  BROKER_MODE is still
+read so callers can distinguish sandbox vs (future) live, but the
+returned instance is always a TradierClient.
+
 BROKER_MODE values
 ------------------
-  paper    — AlpacaBroker paper=True (mock if no keys set)
-             No real API calls for execution.  Chain data from Alpaca
-             paper feed or MOCK mode if ALPACA keys absent.
-
-  sandbox  — TradierClient pointed at sandbox.tradier.com
-             get_option_chain() uses live Tradier sandbox data.
-             place_order() submits real sandbox orders (no money).
+  sandbox  — TradierClient → sandbox.tradier.com (default)
+             get_option_chain() + place_order() use sandbox.
              Requires: TRADIER_API_TOKEN, TRADIER_ACCOUNT_ID
 
-  dual     — TradierClient for data, AlpacaBroker for execution.
-             Requires both sets of credentials.
-
-  single   — Alias for paper (backwards-compat).
-  alpaca   — Alias for paper.
-  tradier  — Alias for sandbox (data-only, no order placement).
+  tradier  — Alias for sandbox.
+  paper    — Alias for sandbox (backwards-compat).
+  single   — Alias for sandbox (backwards-compat).
+  dual     — Alias for sandbox (Tradier now handles both data and execution).
 """
 
 from __future__ import annotations
@@ -66,14 +63,13 @@ def make_broker(
     paper: Optional[bool] = None,
 ):
     """
-    Create and return a fresh BrokerInterface instance.
+    Create and return a fresh TradierClient instance.
 
     Falls back to config.py values for unspecified parameters.
     Raises RuntimeError if PAPER_TRADING=False (live-mode guard).
     """
     import config
 
-    _mode  = (mode or config.BROKER_MODE).lower()
     _paper = paper if paper is not None else config.PAPER_TRADING
 
     if not _paper:
@@ -82,24 +78,7 @@ def make_broker(
             "Remove this guard only after completing sandbox testing."
         )
 
-    # ── sandbox ───────────────────────────────────────────────────────────────
-    # TradierClient pointed at sandbox.tradier.com with order placement enabled.
-    if _mode in ("sandbox", "tradier"):
-        from broker.tradier_client import TradierClient
-        logger.info("Broker: TradierClient (sandbox)")
-        return TradierClient()
-
-    # ── dual ──────────────────────────────────────────────────────────────────
-    if _mode == "dual":
-        from broker.tradier_client import TradierClient
-        from broker.alpaca_client  import AlpacaBroker
-        from broker.dual_broker    import DualBroker
-        tradier = TradierClient()
-        alpaca  = AlpacaBroker(paper=True)
-        logger.info("Broker: DualBroker (Tradier data / Alpaca paper execution)")
-        return DualBroker(data_broker=tradier, execution_broker=alpaca)
-
-    # ── paper / single / alpaca (default) ─────────────────────────────────────
-    from broker.alpaca_client import AlpacaBroker
-    logger.info("Broker: AlpacaBroker (paper=%s)", _paper)
-    return AlpacaBroker(paper=_paper)
+    from broker.tradier_client import TradierClient
+    _mode = (mode or config.BROKER_MODE).lower()
+    logger.info("Broker: TradierClient (mode=%s)", _mode)
+    return TradierClient()

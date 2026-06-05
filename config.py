@@ -21,30 +21,28 @@ EXP_RANGE_MIN_DAYS = EXP_RANGE_MIN_MONTHS * 30   # ~365
 EXP_RANGE_MAX_DAYS = EXP_RANGE_MAX_MONTHS * 30   # ~720
 
 # ── Broker selection ──────────────────────────────────────────────────────────
-# DATA_BROKER    : "alpaca" | "tradier"
-#   Source for prices, historical closes, option chains (with Greeks)
-#   Tradier sandbox has better LEAP chain coverage; Alpaca works for paper testing
+# DATA_BROKER    : "tradier" (sole supported broker)
+# EXEC_BROKER    : "tradier" (sole supported broker)
 #
-# EXEC_BROKER    : "alpaca" (only supported execution venue)
-#
-# BROKER_MODE    : "single" | "dual"
-#   "single" — use DATA_BROKER for everything (no execution in read-only phase)
-#   "dual"   — Tradier data + Alpaca execution (for live/paper order placement)
+# BROKER_MODE    : "sandbox" (default) | "tradier"
+#   All modes resolve to TradierClient.  "sandbox" uses sandbox.tradier.com.
+#   Set TRADIER_PRODUCTION=true for the live API.
 #
 # PAPER_TRADING  : must stay True until you explicitly choose to go live
 #
 # Override via env vars DATA_BROKER, EXEC_BROKER, BROKER_MODE, PAPER_TRADING
 
-DATA_BROKER   = os.getenv("DATA_BROKER",  "alpaca")
-EXEC_BROKER   = os.getenv("EXEC_BROKER",  "alpaca")
+DATA_BROKER   = os.getenv("DATA_BROKER",  "tradier")
+EXEC_BROKER   = os.getenv("EXEC_BROKER",  "tradier")
 PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
 
 # BROKER_MODE valid values:
-#   paper    — AlpacaBroker paper=True (mock if no keys set)  ← default
-#   sandbox  — TradierClient → sandbox.tradier.com (real sandbox orders)
-#   dual     — Tradier data + Alpaca paper execution
-#   single   — alias for paper (backwards-compat)
-BROKER_MODE   = os.getenv("BROKER_MODE",  "paper")
+#   sandbox  — TradierClient → sandbox.tradier.com (default)
+#   tradier  — alias for sandbox
+#   paper    — alias for sandbox (backwards-compat)
+#   single   — alias for sandbox (backwards-compat)
+#   dual     — alias for sandbox (backwards-compat)
+BROKER_MODE   = os.getenv("BROKER_MODE",  "sandbox")
 
 # Tradier account ID — required for sandbox order placement
 # Find at https://developer.tradier.com/user/profile

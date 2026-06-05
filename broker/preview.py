@@ -64,7 +64,7 @@ class PreviewResult:
 
     # Context
     mode:           str = "paper"   # "paper", "sandbox", "live"
-    broker_name:    str = "alpaca"
+    broker_name:    str = "tradier"
 
     # Screener data (filled by caller when available)
     leap_score:     Optional[float] = None

@@ -1,27 +1,17 @@
 """
-broker/dual_broker.py — Dual-broker routing for leap_bot.
+broker/dual_broker.py — Dual-broker routing shim for leap_bot.
 
-Splits calls across two brokers:
-    Market data  → self.data       (TradierClient — live Greeks on LEAP chain)
-    Execution    → self.execution  (AlpacaBroker — paper/live order placement)
-
-This lets leap_bot use Tradier's richer LEAP option data (Greeks available
-without an Alpaca subscription) while keeping Alpaca as the execution venue.
+Kept for import compatibility.  Since TradierClient now handles both
+market data and execution, DualBroker simply passes all calls through
+to the single underlying broker.
 
 Usage
 -----
     from broker.tradier_client import TradierClient
-    from broker.alpaca_client import AlpacaBroker
     from broker.dual_broker import DualBroker
 
-    broker = DualBroker(
-        data_broker=TradierClient(),
-        execution_broker=AlpacaBroker(paper=True),
-    )
-
-    price = broker.get_latest_price("QQQ")          # → Tradier
-    chain = broker.get_option_chain("QQQ", "call")   # → Tradier
-    order = broker.buy_to_open_call("QQQ...", 1)     # → Alpaca
+    broker = DualBroker(data_broker=TradierClient(), execution_broker=TradierClient())
+    # or more simply: just use TradierClient() directly.
 """
 
 from __future__ import annotations

@@ -385,7 +385,7 @@ def cmd_status(args, chat_id):
 def cmd_chain(args, chat_id):
     """
     /chain SYMBOL — fetch live LEAP option chain and show best candidate.
-    Requires ALPACA_API_KEY/ALPACA_API_SECRET or TRADIER_API_TOKEN in .env
+    Requires TRADIER_API_TOKEN in .env
     """
     if not args:
         send_message("Usage: /chain SYMBOL\nExample: /chain QQQ", chat_id=chat_id)
@@ -681,7 +681,7 @@ def cmd_broker_preview(args, chat_id):
 
     mode = config.BROKER_MODE.lower()
 
-    if mode in ("paper", "single", "alpaca"):
+    if mode in ("paper", "single"):
         send_message(
             "Set BROKER_MODE=sandbox in .env and restart to use broker preview.\n\n"
             "Current mode: paper — use /leap_preview for read-only preview.",
