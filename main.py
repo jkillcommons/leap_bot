@@ -1024,6 +1024,150 @@ def mode_diagonal(dry_run=False, symbol=None):
     print(f"  Net debit: ${found.net_debit:.2f} | Monthly yield: {found.monthly_yield_pct*100:.1f}%\n")
 
 
+def mode_condor(dry_run=False, symbol=None):
+    """
+    Iron Condor entry — Play 4.
+    High IV (VIX >28) required. Sell OTM call + put, buy wings for protection.
+    """
+    import config
+    from chain.condor_chain import CondorChain
+    from broker.factory import make_broker
+
+    print(f"\n{'='*64}")
+    print("  Iron Condor Scanner (Play 4)" + (" (DRY RUN)" if dry_run else ""))
+    print(f"{'='*64}")
+
+    try:
+        broker = make_broker()
+    except Exception as e:
+        print(f"  Broker init failed: {e}\n")
+        return
+
+    # VIX gate
+    vix = None
+    try:
+        vix = broker.get_vix() if hasattr(broker, "get_vix") else None
+    except Exception:
+        pass
+
+    if vix is not None and vix < 28:
+        print(f"  VIX {vix:.1f} < 28 — Iron Condor suspended (high IV required).\n")
+        return
+    if vix is not None:
+        print(f"  VIX: {vix:.1f} ✅")
+
+    # Resolve symbol universe
+    if symbol:
+        symbols = [symbol.upper()]
+        print(f"  Symbol override: {symbols[0]}\n")
+    else:
+        import db.shared_db as sdb
+        recs = sdb.get_leap_recommendations(20)
+        symbols = [r["ticker"] for r in recs if r.get("ticker")][:10]
+        if not symbols:
+            print("  No candidates in screener DB.\n")
+            return
+        print(f"  Scanning {len(symbols)} screener candidates…\n")
+
+    condor_chain = CondorChain(broker)
+    found = None
+    found_sym = None
+
+    for sym in symbols:
+        print(f"  {sym}…", end=" ", flush=True)
+        try:
+            price = broker.get_latest_price(sym)
+            if not price:
+                print("no price")
+                continue
+            cand = condor_chain.select(sym, price)
+            if cand:
+                print(f"✅  credit ${cand.net_credit:.2f}  max loss ${cand.max_loss:.2f}")
+                found = cand
+                found_sym = sym
+                break
+            else:
+                print("no valid condor")
+        except Exception as e:
+            print(f"error: {e}")
+
+    if not found:
+        print("\n  No Iron Condor candidate passed all filters.\n")
+        return
+
+    print(f"\n{'='*64}")
+    print("  ✅ IRON CONDOR CANDIDATE")
+    print(f"{'='*64}")
+    print(found.display())
+
+    if dry_run:
+        print("\n  DRY RUN — no trade recorded.\n")
+        return
+
+    # Risk check
+    try:
+        from risk_engine import RiskEngine as _RE
+        _re = _RE(
+            account_size   = None,
+            shared_db_path = config.SHARED_DB_PATH,
+            leaps_db_path  = config.LEAP_DB_PATH,
+        )
+        _re_result = _re.check_entry(
+            "iron_condor", found_sym, None,
+            {"net_credit": found.net_credit, "max_loss": found.max_loss, "contracts": 1},
+            vix=vix,
+        )
+        if _re_result.level != "GREEN":
+            print(f"\n  ⚠️  Risk: {_re_result.level}")
+            for w in _re_result.warnings:
+                print(f"     {w}")
+            for r in _re_result.reasons:
+                print(f"     BLOCKED: {r}")
+        if not _re_result.allowed:
+            print("  Trade blocked by risk engine. Aborted.\n")
+            return
+    except Exception as _re_exc:
+        print(f"  ⚠️  Risk check unavailable (non-fatal): {_re_exc}")
+
+    # Confirm
+    try:
+        answer = input(
+            f"\n  Paper-trade Iron Condor {found_sym} "
+            f"${found.short_put_strike:.0f}P/${found.short_call_strike:.0f}C "
+            f"@ net credit ${found.net_credit:.2f}? [y/N] "
+        ).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+
+    if answer != "y":
+        print("  Aborted.\n")
+        return
+
+    notes = (
+        f"iron_condor; "
+        f"short_put={found.short_put_strike}; long_put={found.long_put_strike}; "
+        f"short_call={found.short_call_strike}; long_call={found.long_call_strike}; "
+        f"credit={found.net_credit}; max_loss={found.max_loss}"
+    )
+
+    trade_id = ldb.add_paper_trade(
+        ticker          = found_sym,
+        strike          = found.short_put_strike,
+        expiration      = found.expiration,
+        entry_price     = found.net_credit,
+        breakeven       = found.break_even_low,
+        target_exit     = round(found.net_credit * 0.50, 2),  # close at 50% profit
+        notes           = notes,
+        contracts       = 1,
+        play_type       = "iron_condor",
+        stop_loss_price = round(found.max_loss * 2, 2),       # stop at 2x credit risk
+    )
+    journal_id  = ldb.get_journal_id(trade_id)
+    journal_str = f" | Journal #{journal_id}" if journal_id else ""
+    print(f"\n  ✅ Iron Condor logged (id={trade_id}{journal_str}).")
+    print(f"  Net credit: ${found.net_credit:.2f} | Max loss: ${found.max_loss:.2f}\n")
+
+
 MODES = {
     "leaps":      None,          # handled specially — supports --dry-run and --symbol
     "watchlist":  lambda: mode_watchlist(),
@@ -1037,6 +1181,7 @@ MODES = {
     "check_leaps": lambda: mode_check_leaps(),
     "monitor":    lambda: mode_monitor(),
     "diagonal":   None,          # handled specially — supports --dry-run and --symbol
+    "condor":     None,          # handled specially — supports --dry-run and --symbol
 }
 
 
@@ -1074,5 +1219,8 @@ if __name__ == "__main__":
     elif args.mode == "diagonal":
         mode_diagonal(dry_run=args.dry_run,
                       symbol=args.symbol.upper() if args.symbol else None)
+    elif args.mode == "condor":
+        mode_condor(dry_run=args.dry_run,
+                    symbol=args.symbol.upper() if args.symbol else None)
     else:
         MODES[args.mode]()

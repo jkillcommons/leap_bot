@@ -18,14 +18,14 @@ DTE_FORCE_CLOSE   = 7
 
 
 class PositionMonitor:
-    def __init__(self, leap_db, dual_broker, telegram_send_fn):
+    def __init__(self, leap_db, broker, telegram_send_fn):
         """
-        leap_db         — db.leap_db module (already imported by caller)
-        dual_broker     — broker instance with get_option_chain()
+        leap_db          — db.leap_db module (already imported by caller)
+        broker           — BrokerInterface instance with get_option_chain()
         telegram_send_fn — callable(str) → None
         """
         self.db     = leap_db
-        self.broker = dual_broker
+        self.broker = broker
         self.send   = telegram_send_fn
 
     # ── public ────────────────────────────────────────────────────────────────
